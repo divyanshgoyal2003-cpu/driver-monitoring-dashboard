@@ -17,7 +17,7 @@ class VideoProcessor:
 
         self.prev_time = current_time
 
-        frame, faces = self.face_detector.detect(frame)
+        frame, faces = self.face_detector.track(frame)
 
         cv2.putText(
             frame,
