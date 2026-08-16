@@ -6,6 +6,7 @@ from app.config import FACE_LANDMARK_MODEL
 from models.landmarks.mediapipe_face_landmarker import MediaPipeFaceLandmarker
 from analytics.blink_detector import BlinkDetector
 from analytics.yawn_detector import YawnDetector
+from analytics.head_pose_estimator import HeadPoseEstimator
 from renderers.landmark_renderer import LandmarkRenderer
 from renderers.dashboard_renderer import DashboardRenderer
 
@@ -16,6 +17,7 @@ class VideoProcessor:
         self.landmarker = MediaPipeFaceLandmarker(FACE_LANDMARK_MODEL)
         self.blink_detector = BlinkDetector()
         self.yawn_detector = YawnDetector()
+        self.head_pose_estimator = None
         self.landmark_renderer = LandmarkRenderer()
         self.dashboard_renderer = DashboardRenderer()
 
@@ -32,12 +34,18 @@ class VideoProcessor:
 
         h, w, _ = frame.shape
 
+        if self.head_pose_estimator is None:
+            self.head_pose_estimator = HeadPoseEstimator(w, h)
+
         blink_data = self.blink_detector.update(
             result.face_landmarks,
             w,
             h
         )
         yawn_data = self.yawn_detector.update(
+            result.face_landmarks
+        )
+        head_pose_data = self.head_pose_estimator.estimate(
             result.face_landmarks
         )
         if result.face_landmarks:
@@ -52,6 +60,7 @@ class VideoProcessor:
             fps,
             len(faces),
              blink_data,
-            yawn_data
+            yawn_data,
+            head_pose_data
         )
         return frame

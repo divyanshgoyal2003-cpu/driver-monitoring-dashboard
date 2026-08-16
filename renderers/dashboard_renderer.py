@@ -3,7 +3,7 @@ import cv2
 
 class DashboardRenderer:
 
-    def draw(self, frame, fps, face_count, blink_data, yawn_data):
+    def draw(self, frame, fps, face_count, blink_data, yawn_data, head_pose_data):
 
         cv2.putText(
             frame,
@@ -97,5 +97,45 @@ class DashboardRenderer:
                 (0, 255, 0),
                  2
             )
+        if head_pose_data:
 
+            cv2.putText(
+                frame,
+                f"Yaw : {head_pose_data['yaw']:.1f}",
+                (20, 315),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (255, 255, 255),
+                2
+            )
+
+            cv2.putText(
+                frame,
+                f"Pitch : {head_pose_data['pitch']:.1f}",
+                (20, 345),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (255, 255, 255),
+                2
+            )
+
+            cv2.putText(
+                frame,
+                f"Roll : {head_pose_data['roll']:.1f}",
+                (20, 375),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (255, 255, 255),
+                2
+            )
+
+            cv2.putText(
+                frame,
+                f"Direction : {head_pose_data['direction']}",
+                (20, 405),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (0, 255, 255),
+                2
+            )
         return frame
