@@ -3,7 +3,7 @@ import cv2
 
 class DashboardRenderer:
 
-    def draw(self, frame, fps, face_count, blink_data):
+    def draw(self, frame, fps, face_count, blink_data, yawn_data):
 
         cv2.putText(
             frame,
@@ -63,6 +63,39 @@ class DashboardRenderer:
                 0.8,
                 color,
                 2
+            )
+        if yawn_data:
+
+            cv2.putText(
+                frame,
+                f"MAR : {yawn_data['mar']:.2f}",
+                (20, 210),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                 0.8,
+                (255, 165, 0),
+                2
+             )
+
+            cv2.putText(
+                frame,
+                f"Yawns : {yawn_data['yawn_count']}",
+                (20, 245),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (0, 255, 255),
+                 2
+            )
+
+            mouth_status = "OPEN" if yawn_data["mouth_open"] else "CLOSED"
+
+            cv2.putText(
+                frame,
+                f"Mouth : {mouth_status}",
+                (20, 280),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                 0.8,
+                (0, 255, 0),
+                 2
             )
 
         return frame

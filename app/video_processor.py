@@ -5,6 +5,7 @@ from models.detectors.yolo_face_detector import YOLOFaceDetector
 from app.config import FACE_LANDMARK_MODEL
 from models.landmarks.mediapipe_face_landmarker import MediaPipeFaceLandmarker
 from analytics.blink_detector import BlinkDetector
+from analytics.yawn_detector import YawnDetector
 from renderers.landmark_renderer import LandmarkRenderer
 from renderers.dashboard_renderer import DashboardRenderer
 
@@ -14,6 +15,7 @@ class VideoProcessor:
         self.face_detector = YOLOFaceDetector()
         self.landmarker = MediaPipeFaceLandmarker(FACE_LANDMARK_MODEL)
         self.blink_detector = BlinkDetector()
+        self.yawn_detector = YawnDetector()
         self.landmark_renderer = LandmarkRenderer()
         self.dashboard_renderer = DashboardRenderer()
 
@@ -35,6 +37,9 @@ class VideoProcessor:
             w,
             h
         )
+        yawn_data = self.yawn_detector.update(
+            result.face_landmarks
+        )
         if result.face_landmarks:
 
             frame = self.landmark_renderer.draw(
@@ -46,6 +51,7 @@ class VideoProcessor:
             frame,
             fps,
             len(faces),
-             blink_data
+             blink_data,
+            yawn_data
         )
         return frame
