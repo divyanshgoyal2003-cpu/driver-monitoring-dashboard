@@ -10,6 +10,7 @@ from analytics.head_pose_estimator import HeadPoseEstimator
 from renderers.landmark_renderer import LandmarkRenderer
 from renderers.dashboard_renderer import DashboardRenderer
 
+
 class VideoProcessor:
     def __init__(self):
         self.prev_time = time.time()
@@ -25,14 +26,19 @@ class VideoProcessor:
 
         current_time = time.time()
 
-        fps = 1 / (current_time - self.prev_time)
+        elapsed = current_time - self.prev_time
+        fps = 1 / elapsed if elapsed > 0 else 0.0
 
         self.prev_time = current_time
 
-        frame, faces = self.face_detector.track(frame)
+        h, w, _ = frame.shape
+
+        # Landmarks are detected on the untouched frame. track() returns
+        # a copy with boxes and ID labels drawn on it, which the
+        # landmarker should not see.
         result = self.landmarker.detect(frame)
 
-        h, w, _ = frame.shape
+        annotated, faces = self.face_detector.track(frame)
 
         if self.head_pose_estimator is None:
             self.head_pose_estimator = HeadPoseEstimator(w, h)
@@ -43,24 +49,28 @@ class VideoProcessor:
             h
         )
         yawn_data = self.yawn_detector.update(
-            result.face_landmarks
+            result.face_landmarks,
+            w,
+            h
         )
         head_pose_data = self.head_pose_estimator.estimate(
             result.face_landmarks
         )
+
         if result.face_landmarks:
 
-            frame = self.landmark_renderer.draw(
-                 frame,
-                 result.face_landmarks
+            annotated = self.landmark_renderer.draw(
+                annotated,
+                result.face_landmarks
             )
 
-        frame = self.dashboard_renderer.draw(
-            frame,
+        annotated = self.dashboard_renderer.draw(
+            annotated,
             fps,
             len(faces),
-             blink_data,
+            blink_data,
             yawn_data,
             head_pose_data
         )
-        return frame
+
+        return annotated
