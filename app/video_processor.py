@@ -1,76 +1,164 @@
-import cv2
 import time
 
+from app.config import FACE_LANDMARK_MODEL, SHOW_LANDMARKS
 from models.detectors.yolo_face_detector import YOLOFaceDetector
-from app.config import FACE_LANDMARK_MODEL
 from models.landmarks.mediapipe_face_landmarker import MediaPipeFaceLandmarker
 from analytics.blink_detector import BlinkDetector
 from analytics.yawn_detector import YawnDetector
 from analytics.head_pose_estimator import HeadPoseEstimator
 from renderers.landmark_renderer import LandmarkRenderer
+from renderers.overlay_renderer import OverlayRenderer
 from renderers.dashboard_renderer import DashboardRenderer
 
 
 class VideoProcessor:
+
+    NOSE = 1
+
     def __init__(self):
-        self.prev_time = time.time()
+
         self.face_detector = YOLOFaceDetector()
         self.landmarker = MediaPipeFaceLandmarker(FACE_LANDMARK_MODEL)
         self.blink_detector = BlinkDetector()
         self.yawn_detector = YawnDetector()
         self.head_pose_estimator = None
         self.landmark_renderer = LandmarkRenderer()
+        self.overlay_renderer = OverlayRenderer()
         self.dashboard_renderer = DashboardRenderer()
 
-    def process(self, frame):
+        self.show_landmarks = SHOW_LANDMARKS
 
-        current_time = time.time()
+        self.prev_time = None
+        self.fps = 0.0
 
-        elapsed = current_time - self.prev_time
-        fps = 1 / elapsed if elapsed > 0 else 0.0
+        # Everything measured on the latest frame, for rendering and
+        # logging.
+        self.state = {}
 
-        self.prev_time = current_time
+    def process(self, frame, timestamp=None):
+        """
+        timestamp is in seconds and drives every time-based threshold.
+        It defaults to wall-clock time; pass the video position when
+        processing a file.
+        """
+
+        if timestamp is None:
+            timestamp = time.monotonic()
+
+        self._update_fps()
 
         h, w, _ = frame.shape
 
-        # Landmarks are detected on the untouched frame. track() returns
-        # a copy with boxes and ID labels drawn on it, which the
-        # landmarker should not see.
-        result = self.landmarker.detect(frame)
+        # Landmarks are detected on the untouched frame; overlays are
+        # only drawn afterwards, on a copy.
+        result = self.landmarker.detect(frame, timestamp)
+        landmarks = result.face_landmarks
 
-        annotated, faces = self.face_detector.track(frame)
+        faces = self.face_detector.track(frame)
+
+        if not landmarks and faces:
+            # The face is too small for MediaPipe's own detector; retry
+            # inside the largest YOLO box.
+            largest = max(faces, key=self._box_area)
+            landmarks = self.landmarker.detect_in_region(
+                frame,
+                largest["bbox"]
+            )
+
+        driver_id = self._mark_driver(faces, landmarks, w, h)
 
         if self.head_pose_estimator is None:
             self.head_pose_estimator = HeadPoseEstimator(w, h)
 
         blink_data = self.blink_detector.update(
-            result.face_landmarks,
+            landmarks,
             w,
-            h
+            h,
+            timestamp
         )
         yawn_data = self.yawn_detector.update(
-            result.face_landmarks,
+            landmarks,
             w,
-            h
+            h,
+            timestamp
         )
         head_pose_data = self.head_pose_estimator.estimate(
-            result.face_landmarks
+            landmarks,
+            timestamp
         )
 
-        if result.face_landmarks:
+        self.state = {
+            "timestamp": timestamp,
+            "fps": self.fps,
+            "faces": faces,
+            "face_count": len(faces),
+            "driver_id": driver_id,
+            "face_detected": bool(landmarks),
+            "blink": blink_data,
+            "yawn": yawn_data,
+            "head_pose": head_pose_data
+        }
 
-            annotated = self.landmark_renderer.draw(
-                annotated,
-                result.face_landmarks
-            )
+        annotated = frame.copy()
 
-        annotated = self.dashboard_renderer.draw(
-            annotated,
-            fps,
-            len(faces),
-            blink_data,
-            yawn_data,
-            head_pose_data
-        )
+        if self.show_landmarks and landmarks:
+            annotated = self.landmark_renderer.draw(annotated, landmarks)
 
-        return annotated
+        annotated = self.overlay_renderer.draw(annotated, self.state)
+
+        return self.dashboard_renderer.draw(annotated, self.state)
+
+    def recalibrate(self):
+
+        if self.head_pose_estimator is not None:
+            self.head_pose_estimator.start_calibration()
+
+    def close(self):
+        self.landmarker.close()
+
+    def _update_fps(self):
+
+        now = time.perf_counter()
+
+        if self.prev_time is not None:
+            elapsed = now - self.prev_time
+
+            if elapsed > 0:
+                instant = 1.0 / elapsed
+
+                # Exponential smoothing keeps the reading steady.
+                if self.fps == 0.0:
+                    self.fps = instant
+                else:
+                    self.fps = 0.9 * self.fps + 0.1 * instant
+
+        self.prev_time = now
+
+    @staticmethod
+    def _box_area(face):
+
+        x1, y1, x2, y2 = face["bbox"]
+
+        return (x2 - x1) * (y2 - y1)
+
+    def _mark_driver(self, faces, landmarks, width, height):
+        """
+        The analysed face is the one MediaPipe returned. Mark the YOLO
+        box that contains its nose as the driver and return that box's
+        track ID.
+        """
+
+        if not landmarks:
+            return None
+
+        nose = landmarks[0][self.NOSE]
+        nx, ny = nose.x * width, nose.y * height
+
+        for face in faces:
+            x1, y1, x2, y2 = face["bbox"]
+
+            if x1 <= nx <= x2 and y1 <= ny <= y2:
+                face["is_driver"] = True
+                return face["id"]
+
+        return None

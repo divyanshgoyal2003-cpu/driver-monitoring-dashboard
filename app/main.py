@@ -1,31 +1,80 @@
-from app.camera import CameraManager
-from app.video_processor import VideoProcessor
-from app.config import *
+import argparse
 
 import cv2
+
+from app.camera import CameraManager
+from app.config import CAMERA_INDEX, WINDOW_NAME
+from app.video_processor import VideoProcessor
+from utils.display import fit_to_screen
+
+
+def parse_args():
+
+    parser = argparse.ArgumentParser(
+        description="Unified Driver Monitoring Dashboard"
+    )
+
+    parser.add_argument(
+        "--source",
+        default=str(CAMERA_INDEX),
+        help="webcam index (e.g. 0) or path to a video file"
+    )
+
+    return parser.parse_args()
+
+
+def parse_source(source):
+    return int(source) if source.isdigit() else source
 
 
 def main():
 
-    camera = CameraManager()
+    args = parse_args()
+
+    camera = CameraManager(parse_source(args.source))
     processor = VideoProcessor()
 
-    while True:
+    cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
+    window_sized = False
 
-        frame = camera.read_frame()
+    try:
+        while True:
 
-        if frame is None:
-            break
+            frame = camera.read_frame()
 
-        processed_frame = processor.process(frame)
+            if frame is None:
+                break
 
-        cv2.imshow(WINDOW_NAME, processed_frame)
+            output = processor.process(frame, camera.last_timestamp)
 
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
+            if not window_sized:
+                cv2.resizeWindow(
+                    WINDOW_NAME,
+                    *fit_to_screen(output.shape[1], output.shape[0])
+                )
+                window_sized = True
 
-    camera.release()
-    cv2.destroyAllWindows()
+            cv2.imshow(WINDOW_NAME, output)
+
+            key = cv2.waitKey(1) & 0xFF
+
+            if key in (ord('q'), 27):
+                break
+
+            if key == ord('l'):
+                processor.show_landmarks = not processor.show_landmarks
+
+            if key == ord('c'):
+                processor.recalibrate()
+
+            # Closing the window with its X button ends the session.
+            if cv2.getWindowProperty(WINDOW_NAME, cv2.WND_PROP_VISIBLE) < 1:
+                break
+
+    finally:
+        camera.release()
+        processor.close()
+        cv2.destroyAllWindows()
 
 
 if __name__ == "__main__":

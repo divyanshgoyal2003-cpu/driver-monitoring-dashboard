@@ -4,3 +4,5 @@ __pycache__/
 trained_models/
 datasets/
 .env
+data/
+*.part

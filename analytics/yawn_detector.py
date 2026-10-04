@@ -1,4 +1,8 @@
+from collections import deque
+
 from scipy.spatial import distance
+
+from app.config import MAR_THRESHOLD, YAWN_MIN_DURATION, YAWN_RATE_WINDOW
 
 
 class YawnDetector:
@@ -10,19 +14,18 @@ class YawnDetector:
     MOUTH_TOP = 13
     MOUTH_BOTTOM = 14
 
-    def __init__(self):
+    def __init__(self, mar_threshold=MAR_THRESHOLD,
+                 min_duration=YAWN_MIN_DURATION,
+                 rate_window=YAWN_RATE_WINDOW):
 
         self.yawn_count = 0
-        self.open_frames = 0
+        self.open_since = None
+        self.yawn_times = deque()
 
-        # Tuned against pixel-space MAR. The previous value of 0.6 was
-        # tuned against normalized coordinates, where x and y are scaled
-        # by different amounts and the ratio therefore drifts with head
-        # roll. 0.6 * (720 / 1280) = 0.3375 preserves the old behaviour
-        # for a level head at 720p while staying correct at any
-        # resolution and any roll angle.
-        self.MAR_THRESHOLD = 0.34
-        self.MIN_FRAMES = 8
+        # See app/config.py for how the MAR threshold was derived.
+        self.MAR_THRESHOLD = mar_threshold
+        self.MIN_DURATION = min_duration
+        self.RATE_WINDOW = rate_window
 
     def mouth_aspect_ratio(self, face, width, height):
 
@@ -45,9 +48,12 @@ class YawnDetector:
 
         return vertical / horizontal
 
-    def update(self, landmarks, width, height):
+    def update(self, landmarks, width, height, timestamp):
 
         if not landmarks:
+            # Drop a half-finished yawn rather than counting it when the
+            # face reappears with the mouth closed.
+            self.open_since = None
             return None
 
         face = landmarks[0]
@@ -57,16 +63,30 @@ class YawnDetector:
         mouth_open = mar > self.MAR_THRESHOLD
 
         if mouth_open:
-            self.open_frames += 1
+            if self.open_since is None:
+                self.open_since = timestamp
 
-        else:
-            if self.open_frames >= self.MIN_FRAMES:
+        elif self.open_since is not None:
+            if timestamp - self.open_since >= self.MIN_DURATION:
                 self.yawn_count += 1
+                self.yawn_times.append(timestamp)
 
-            self.open_frames = 0
+            self.open_since = None
+
+        while (self.yawn_times
+               and timestamp - self.yawn_times[0] > self.RATE_WINDOW):
+            self.yawn_times.popleft()
+
+        open_duration = (
+            timestamp - self.open_since
+            if self.open_since is not None
+            else 0.0
+        )
 
         return {
             "mar": mar,
             "mouth_open": mouth_open,
-            "yawn_count": self.yawn_count
+            "open_duration": open_duration,
+            "yawn_count": self.yawn_count,
+            "recent_yawns": len(self.yawn_times)
         }

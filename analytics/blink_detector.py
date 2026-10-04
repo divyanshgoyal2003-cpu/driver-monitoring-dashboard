@@ -1,4 +1,13 @@
+from collections import deque
+
 from scipy.spatial import distance
+
+from app.config import (
+    EAR_THRESHOLD,
+    BLINK_MIN_DURATION,
+    BLINK_MAX_DURATION,
+    BLINK_RATE_WINDOW
+)
 
 
 class BlinkDetector:
@@ -6,12 +15,20 @@ class BlinkDetector:
     LEFT_EYE = [33, 160, 158, 133, 153, 144]
     RIGHT_EYE = [362, 385, 387, 263, 373, 380]
 
-    def __init__(self):
-        self.blink_count = 0
-        self.closed_frames = 0
+    def __init__(self, ear_threshold=EAR_THRESHOLD,
+                 min_duration=BLINK_MIN_DURATION,
+                 max_duration=BLINK_MAX_DURATION,
+                 rate_window=BLINK_RATE_WINDOW):
 
-        self.EAR_THRESHOLD = 0.23
-        self.MIN_FRAMES = 2
+        self.blink_count = 0
+        self.closed_since = None
+        self.blink_times = deque()
+        self.start_time = None
+
+        self.EAR_THRESHOLD = ear_threshold
+        self.MIN_DURATION = min_duration
+        self.MAX_DURATION = max_duration
+        self.RATE_WINDOW = rate_window
 
     def eye_aspect_ratio(self, eye):
         A = distance.euclidean(eye[1], eye[5])
@@ -20,10 +37,17 @@ class BlinkDetector:
 
         return (A + B) / (2.0 * C)
 
-    def update(self, landmarks, width, height):
+    def update(self, landmarks, width, height, timestamp):
 
         if not landmarks:
+            # A closure cannot be timed while the face is out of view, so
+            # a half-finished blink is dropped instead of being counted
+            # when the face comes back.
+            self.closed_since = None
             return None
+
+        if self.start_time is None:
+            self.start_time = timestamp
 
         face = landmarks[0]
 
@@ -43,15 +67,45 @@ class BlinkDetector:
 
         ear = (left_ear + right_ear) / 2
 
-        if ear < self.EAR_THRESHOLD:
-            self.closed_frames += 1
-        else:
-            if self.closed_frames >= self.MIN_FRAMES:
+        eyes_closed = ear < self.EAR_THRESHOLD
+
+        if eyes_closed:
+            if self.closed_since is None:
+                self.closed_since = timestamp
+
+        elif self.closed_since is not None:
+            duration = timestamp - self.closed_since
+
+            if self.MIN_DURATION <= duration < self.MAX_DURATION:
                 self.blink_count += 1
-            self.closed_frames = 0
+                self.blink_times.append(timestamp)
+
+            self.closed_since = None
+
+        while (self.blink_times
+               and timestamp - self.blink_times[0] > self.RATE_WINDOW):
+            self.blink_times.popleft()
+
+        closed_duration = (
+            timestamp - self.closed_since
+            if self.closed_since is not None
+            else 0.0
+        )
 
         return {
             "ear": ear,
             "blink_count": self.blink_count,
-            "eyes_closed": ear < self.EAR_THRESHOLD
+            "blink_rate": self._blink_rate(timestamp),
+            "eyes_closed": eyes_closed,
+            "closed_duration": closed_duration
         }
+
+    def _blink_rate(self, timestamp):
+        """Blinks per minute over the last RATE_WINDOW seconds."""
+
+        span = min(self.RATE_WINDOW, timestamp - self.start_time)
+
+        if span <= 0:
+            return 0.0
+
+        return len(self.blink_times) * 60.0 / span

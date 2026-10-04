@@ -1,8 +1,23 @@
 import cv2
 import numpy as np
 
+from app.config import (
+    HEAD_YAW_THRESHOLD,
+    HEAD_PITCH_THRESHOLD,
+    HEAD_POSE_CALIBRATION_TIME,
+    HEAD_POSE_MAX_OFFSET
+)
+
 
 class HeadPoseEstimator:
+    """
+    Estimates yaw, pitch and roll in degrees.
+
+    Sign convention, from the driver's point of view with an unmirrored
+    camera image: negative yaw = turned to the driver's left, positive
+    pitch = looking down, positive roll = head tilted clockwise in the
+    image.
+    """
 
     # MediaPipe landmark indices
     NOSE = 1
@@ -12,10 +27,32 @@ class HeadPoseEstimator:
     LEFT_MOUTH = 61
     RIGHT_MOUTH = 291
 
-    def __init__(self, frame_width, frame_height):
+    # The model points below are y-up with +z pointing out of the face,
+    # while the camera frame is y-down with +z pointing into the scene.
+    # solvePnP therefore returns a 180 degree rotation about x even for a
+    # face looking straight at the camera. Decomposing that rotation
+    # directly sits on the +-180 degree wrap, where the Euler angles can
+    # flip (a frontal face came back as yaw = 180, "RIGHT"). Removing the
+    # flip first keeps a frontal face at (0, 0, 0).
+    MODEL_TO_CAMERA = np.array([
+        [1.0, 0.0, 0.0],
+        [0.0, -1.0, 0.0],
+        [0.0, 0.0, -1.0]
+    ])
+
+    def __init__(self, frame_width, frame_height,
+                 yaw_threshold=HEAD_YAW_THRESHOLD,
+                 pitch_threshold=HEAD_PITCH_THRESHOLD,
+                 calibration_time=HEAD_POSE_CALIBRATION_TIME,
+                 max_offset=HEAD_POSE_MAX_OFFSET):
 
         self.frame_width = frame_width
         self.frame_height = frame_height
+
+        self.yaw_threshold = yaw_threshold
+        self.pitch_threshold = pitch_threshold
+        self.calibration_time = calibration_time
+        self.max_offset = max_offset
 
         self.camera_matrix = np.array([
             [frame_width, 0, frame_width / 2],
@@ -35,7 +72,25 @@ class HeadPoseEstimator:
             (150.0, -150.0, -125.0)      # Right mouth
         ], dtype=np.float64)
 
-    def estimate(self, landmarks):
+        self.yaw_offset = 0.0
+        self.pitch_offset = 0.0
+        self.start_calibration()
+
+    def start_calibration(self):
+        """
+        Learn a new neutral pose from the next few seconds of samples.
+        The driver should look straight ahead while this runs.
+        """
+
+        self.calibrated = False
+        self.calibration_start = None
+        self.calibration_samples = []
+
+    def estimate(self, landmarks, timestamp=None):
+        """
+        Calibration only runs when a timestamp is passed. Without one the
+        raw angles are returned (offsets stay at zero).
+        """
 
         if not landmarks:
             return None
@@ -64,11 +119,13 @@ class HeadPoseEstimator:
 
         rotation_matrix, _ = cv2.Rodrigues(rotation_vector)
 
-        angles = self._rotation_to_angles(rotation_matrix)
+        pitch, yaw, roll = self._rotation_to_angles(rotation_matrix)
 
-        yaw = angles[1]
-        pitch = angles[0]
-        roll = angles[2]
+        if timestamp is not None and not self.calibrated:
+            self._add_calibration_sample(yaw, pitch, timestamp)
+
+        yaw -= self.yaw_offset
+        pitch -= self.pitch_offset
 
         direction = self._get_direction(yaw, pitch)
 
@@ -76,7 +133,8 @@ class HeadPoseEstimator:
             "yaw": yaw,
             "pitch": pitch,
             "roll": roll,
-            "direction": direction
+            "direction": direction,
+            "calibrated": self.calibrated
         }
 
     def _point(self, landmark):
@@ -88,39 +146,55 @@ class HeadPoseEstimator:
 
     def _rotation_to_angles(self, rotation_matrix):
 
-        angles, _, _, _, _, _ = cv2.RQDecomp3x3(
-            rotation_matrix
-        )
+        head_rotation = rotation_matrix @ self.MODEL_TO_CAMERA
 
-        pitch = angles[0]
-        yaw = angles[1]
-        roll = angles[2]
+        angles, _, _, _, _, _ = cv2.RQDecomp3x3(head_rotation)
 
-        # Normalize pitch to the range [-90, 90]
-        if pitch > 90:
-            pitch -= 180
+        pitch = float(angles[0])
+        yaw = float(angles[1])
+        roll = float(angles[2])
 
-        if pitch < -90:
-            pitch += 180
+        return pitch, yaw, roll
 
-        return np.array([
-            pitch,
-            yaw,
-            roll
-        ])
+    def _add_calibration_sample(self, yaw, pitch, timestamp):
+
+        if self.calibration_start is None:
+            self.calibration_start = timestamp
+
+        self.calibration_samples.append((yaw, pitch))
+
+        elapsed = timestamp - self.calibration_start
+
+        if elapsed < self.calibration_time:
+            return
+
+        if len(self.calibration_samples) < 5:
+            return
+
+        samples = np.array(self.calibration_samples)
+
+        self.yaw_offset = float(np.clip(
+            np.median(samples[:, 0]), -self.max_offset, self.max_offset
+        ))
+        self.pitch_offset = float(np.clip(
+            np.median(samples[:, 1]), -self.max_offset, self.max_offset
+        ))
+
+        self.calibrated = True
+        self.calibration_samples = []
 
     def _get_direction(self, yaw, pitch):
 
-        if yaw < -15:
+        if yaw < -self.yaw_threshold:
             return "LEFT"
 
-        if yaw > 15:
+        if yaw > self.yaw_threshold:
             return "RIGHT"
 
-        if pitch < -15:
+        if pitch < -self.pitch_threshold:
             return "UP"
 
-        if pitch > 15:
+        if pitch > self.pitch_threshold:
             return "DOWN"
 
         return "FORWARD"
