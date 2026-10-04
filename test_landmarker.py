@@ -16,4 +16,4 @@ options = vision.FaceLandmarkerOptions(
 
 landmarker = vision.FaceLandmarker.create_from_options(options)
 
-print("✅ Face Landmarker Loaded Successfully!")
+print("Face Landmarker Loaded Successfully!")
