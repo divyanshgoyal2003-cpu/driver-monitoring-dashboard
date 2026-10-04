@@ -1,141 +1,414 @@
 import cv2
+import numpy as np
+
+from app.config import DISPLAY_HEIGHT, PANEL_WIDTH, SHOW_FPS
+from renderers.theme import (
+    BACKGROUND,
+    DIVIDER,
+    TEXT,
+    MUTED,
+    GOOD,
+    WARN,
+    BAD,
+    LEVEL_COLORS,
+    SEVERITY_COLORS,
+    put_text,
+    put_text_right
+)
+
+ROW_HEIGHT = 27
+LABEL_X = 16
+VALUE_X = 120
+
+MISSING = "--"
+
+# At most this many alerts are listed at the bottom of the panel.
+MAX_ALERTS = 3
 
 
 class DashboardRenderer:
+    """
+    Builds the status panel and attaches it to the right of the camera
+    frame. Each feature contributes rows of (label, value, colour,
+    detail); a None in the row list draws a divider.
+    """
 
-    def draw(self, frame, fps, face_count, blink_data, yawn_data, head_pose_data):
+    def __init__(self, panel_width=PANEL_WIDTH,
+                 display_height=DISPLAY_HEIGHT):
 
-        cv2.putText(
-            frame,
-            f"FPS : {fps:.2f}",
-            (20, 35),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
-            (0, 255, 0),
-            2
+        self.panel_width = panel_width
+        self.display_height = display_height
+
+    def draw(self, frame, state):
+
+        display = self._fit_height(frame)
+
+        panel = np.full(
+            (self.display_height, self.panel_width, 3),
+            BACKGROUND,
+            dtype=np.uint8
         )
 
-        cv2.putText(
+        y = self._draw_header(panel, state)
+
+        y = self._draw_safety_index(panel, y, state["risk"])
+
+        self._draw_rows(panel, y, self._rows(state))
+
+        self._draw_alerts(panel, state["risk"]["alerts"])
+
+        self._draw_footer(panel)
+
+        return np.hstack([display, panel])
+
+    def _fit_height(self, frame):
+
+        h, w = frame.shape[:2]
+
+        if h == self.display_height:
+            return frame
+
+        scale = self.display_height / h
+
+        return cv2.resize(
             frame,
-            f"Faces : {face_count}",
-            (20, 70),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.8,
-            (255, 255, 0),
-            2
+            (int(round(w * scale)), self.display_height),
+            interpolation=cv2.INTER_AREA if scale < 1 else cv2.INTER_LINEAR
         )
 
-        if blink_data:
+    def _draw_header(self, panel, state):
 
-            cv2.putText(
-                frame,
-                f"EAR : {blink_data['ear']:.2f}",
-                (20, 105),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
-                (0, 255, 255),
-                2
+        put_text(panel, "DRIVER MONITOR", (LABEL_X, 34), 0.75, TEXT, 2)
+
+        if SHOW_FPS:
+            put_text_right(
+                panel,
+                f"{state['fps']:.1f} FPS",
+                self.panel_width - LABEL_X,
+                34,
+                0.5,
+                MUTED
             )
 
-            cv2.putText(
-                frame,
-                f"Blinks : {blink_data['blink_count']}",
-                (20, 140),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
-                (0, 255, 0),
-                2
+        y = 50
+        self._divider(panel, y)
+
+        return y + 8
+
+    def _draw_safety_index(self, panel, y, risk):
+
+        right_x = self.panel_width - LABEL_X
+        level = risk["level"]
+        score = risk["score"]
+        color = LEVEL_COLORS[level]
+
+        put_text(panel, "SAFETY INDEX", (LABEL_X, y + 20), 0.45, MUTED)
+        put_text_right(panel, level, right_x, y + 20, 0.55, color, 2)
+
+        put_text(panel, f"{score:.0f}", (LABEL_X, y + 64), 1.3, color, 3)
+
+        bar_left = LABEL_X + 95
+        bar_top, bar_bottom = y + 46, y + 60
+
+        cv2.rectangle(panel, (bar_left, bar_top), (right_x, bar_bottom),
+                      DIVIDER, -1)
+
+        filled = bar_left + int((right_x - bar_left) * score / 100)
+
+        if filled > bar_left:
+            cv2.rectangle(panel, (bar_left, bar_top), (filled, bar_bottom),
+                          color, -1)
+
+        y += 76
+        self._divider(panel, y)
+
+        return y + 4
+
+    def _draw_alerts(self, panel, alerts):
+
+        shown = alerts[:MAX_ALERTS]
+        line_height = 22
+
+        bottom = self.display_height - 44
+        top = bottom - 26 - line_height * MAX_ALERTS
+
+        self._divider(panel, top)
+
+        put_text(panel, "ALERTS", (LABEL_X, top + 22), 0.45, MUTED)
+
+        if len(alerts) > MAX_ALERTS:
+            put_text_right(
+                panel,
+                f"+{len(alerts) - MAX_ALERTS} more",
+                self.panel_width - LABEL_X,
+                top + 22,
+                0.45,
+                MUTED
             )
 
-            status = "CLOSED" if blink_data["eyes_closed"] else "OPEN"
+        y = top + 22
 
-            color = (
-                (0, 0, 255)
-                if blink_data["eyes_closed"]
-                else (0, 255, 0)
+        if not shown:
+            put_text(panel, "None", (LABEL_X, y + line_height), 0.5, GOOD)
+            return
+
+        for alert in shown:
+            y += line_height
+            color = SEVERITY_COLORS[alert["severity"]]
+
+            cv2.circle(panel, (LABEL_X + 5, y - 5), 5, color, -1)
+            put_text(panel, alert["message"], (LABEL_X + 18, y), 0.5, color)
+
+    def _rows(self, state):
+
+        rows = []
+
+        rows.extend(self._face_rows(state))
+        rows.append(None)
+        rows.extend(self._eye_rows(state["blink"]))
+        rows.extend(self._gaze_rows(state["gaze"]))
+        rows.extend(self._drowsiness_rows(state["drowsiness"]))
+        rows.append(None)
+        rows.extend(self._yawn_rows(state["yawn"]))
+        rows.append(None)
+        rows.extend(self._head_pose_rows(state["head_pose"]))
+        rows.extend(self._attention_rows(state["distraction"]))
+        rows.append(None)
+        rows.extend(self._phone_rows(state["phone"]))
+        rows.extend(self._emotion_rows(state["emotion"]))
+        rows.extend(self._seatbelt_rows(state["seatbelt"]))
+
+        return rows
+
+    def _face_rows(self, state):
+
+        count = state["face_count"]
+        driver_id = state["driver_id"]
+
+        detail = ""
+
+        if driver_id is not None:
+            detail = f"driver ID {driver_id}"
+        elif state["face_detected"]:
+            detail = "driver found"
+
+        return [
+            ("FACES", str(count), TEXT if count else WARN, detail)
+        ]
+
+    def _eye_rows(self, blink):
+
+        if not blink:
+            return [
+                ("EYES", MISSING, MUTED, ""),
+                ("BLINKS", MISSING, MUTED, "")
+            ]
+
+        closed = blink["eyes_closed"]
+
+        return [
+            (
+                "EYES",
+                "CLOSED" if closed else "OPEN",
+                BAD if closed else GOOD,
+                f"EAR {blink['ear']:.2f}"
+            ),
+            (
+                "BLINKS",
+                str(blink["blink_count"]),
+                TEXT,
+                f"{blink['blink_rate']:.0f} / min"
             )
+        ]
 
-            cv2.putText(
-                frame,
-                f"Eyes : {status}",
-                (20, 175),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
-                color,
-                2
+    def _gaze_rows(self, gaze):
+
+        if not gaze:
+            return [("GAZE", MISSING, MUTED, "")]
+
+        direction = gaze["direction"]
+
+        return [
+            (
+                "GAZE",
+                direction,
+                GOOD if direction == "CENTER" else WARN,
+                f"yaw {gaze['gaze_yaw']:+.0f}"
             )
-        if yawn_data:
+        ]
 
-            cv2.putText(
-                frame,
-                f"MAR : {yawn_data['mar']:.2f}",
-                (20, 210),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                 0.8,
-                (255, 165, 0),
-                2
-             )
+    def _drowsiness_rows(self, drowsiness):
 
-            cv2.putText(
-                frame,
-                f"Yawns : {yawn_data['yawn_count']}",
-                (20, 245),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.8,
-                (0, 255, 255),
-                 2
+        if not drowsiness:
+            return [("DROWSINESS", MISSING, MUTED, "")]
+
+        state = drowsiness["state"]
+
+        color = {
+            "AWAKE": GOOD,
+            "TIRED": WARN,
+            "DROWSY": BAD,
+            "MICROSLEEP": BAD
+        }[state]
+
+        detail = f"PERCLOS {drowsiness['perclos'] * 100:.0f}%"
+
+        if not drowsiness["perclos_ready"]:
+            detail += " (warming up)"
+
+        return [("DROWSINESS", state, color, detail)]
+
+    def _yawn_rows(self, yawn):
+
+        if not yawn:
+            return [
+                ("MOUTH", MISSING, MUTED, ""),
+                ("YAWNS", MISSING, MUTED, "")
+            ]
+
+        return [
+            (
+                "MOUTH",
+                "OPEN" if yawn["mouth_open"] else "CLOSED",
+                WARN if yawn["mouth_open"] else GOOD,
+                f"MAR {yawn['mar']:.2f}"
+            ),
+            (
+                "YAWNS",
+                str(yawn["yawn_count"]),
+                WARN if yawn["recent_yawns"] >= 3 else TEXT,
+                f"{yawn['recent_yawns']} in last 5 min"
             )
+        ]
 
-            mouth_status = "OPEN" if yawn_data["mouth_open"] else "CLOSED"
+    def _head_pose_rows(self, head_pose):
 
-            cv2.putText(
-                frame,
-                f"Mouth : {mouth_status}",
-                (20, 280),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                 0.8,
-                (0, 255, 0),
-                 2
+        if not head_pose:
+            return [
+                ("HEAD", MISSING, MUTED, ""),
+                ("ANGLES", MISSING, MUTED, "")
+            ]
+
+        direction = head_pose["direction"]
+
+        if not head_pose["calibrated"]:
+            value, color = "CALIBRATING", WARN
+        else:
+            value = direction
+            color = GOOD if direction == "FORWARD" else WARN
+
+        return [
+            ("HEAD", value, color, ""),
+            (
+                "ANGLES",
+                f"Y {head_pose['yaw']:+.0f}  "
+                f"P {head_pose['pitch']:+.0f}  "
+                f"R {head_pose['roll']:+.0f}",
+                TEXT,
+                "deg"
             )
-        if head_pose_data:
+        ]
 
-            cv2.putText(
-                frame,
-                f"Yaw : {head_pose_data['yaw']:.1f}",
-                (20, 315),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (255, 255, 255),
-                2
-            )
+    def _attention_rows(self, distraction):
 
-            cv2.putText(
-                frame,
-                f"Pitch : {head_pose_data['pitch']:.1f}",
-                (20, 345),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (255, 255, 255),
-                2
-            )
+        if not distraction:
+            return [("ATTENTION", MISSING, MUTED, "")]
 
-            cv2.putText(
-                frame,
-                f"Roll : {head_pose_data['roll']:.1f}",
-                (20, 375),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (255, 255, 255),
-                2
-            )
+        count = distraction["distraction_count"]
+        detail = f"{count} distraction{'' if count == 1 else 's'}"
 
-            cv2.putText(
-                frame,
-                f"Direction : {head_pose_data['direction']}",
-                (20, 405),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 255, 255),
-                2
+        if distraction["distracted"]:
+            return [("ATTENTION", "DISTRACTED", BAD, detail)]
+
+        if not distraction["eyes_on_road"]:
+            seconds = distraction["off_road_duration"]
+            return [("ATTENTION", f"OFF ROAD {seconds:.1f}s", WARN, detail)]
+
+        return [("ATTENTION", "ON ROAD", GOOD, detail)]
+
+    def _phone_rows(self, phone):
+
+        count = phone["usage_count"]
+        detail = f"{count} use{'' if count == 1 else 's'}"
+
+        if phone["in_use"]:
+            seconds = phone["usage_duration"]
+            return [("PHONE", f"IN USE {seconds:.0f}s", BAD, detail)]
+
+        if phone["detected"]:
+            return [("PHONE", "DETECTED", WARN, detail)]
+
+        return [("PHONE", "NOT DETECTED", GOOD, detail)]
+
+    def _emotion_rows(self, emotion):
+
+        if not emotion:
+            return [("EMOTION", MISSING, MUTED, "")]
+
+        return [
+            (
+                "EMOTION",
+                emotion["emotion"].upper(),
+                WARN if emotion["negative"] else GOOD,
+                f"{emotion['confidence'] * 100:.0f}%"
             )
-        return frame
+        ]
+
+    def _seatbelt_rows(self, seatbelt):
+
+        status = seatbelt["status"]
+
+        if status == "ON":
+            return [("SEATBELT", "ON", GOOD, "")]
+
+        if status == "OFF":
+            return [("SEATBELT", "NOT DETECTED", WARN, "")]
+
+        return [("SEATBELT", "UNKNOWN", MUTED, "chest not in view")]
+
+    def _draw_rows(self, panel, y, rows):
+
+        right_x = self.panel_width - LABEL_X
+
+        for row in rows:
+
+            if row is None:
+                self._divider(panel, y + 4)
+                y += 10
+                continue
+
+            label, value, color, detail = row
+
+            y += ROW_HEIGHT
+
+            put_text(panel, label, (LABEL_X, y), 0.45, MUTED)
+            put_text(panel, value, (VALUE_X, y), 0.55, color, 1)
+
+            if detail:
+                put_text_right(panel, detail, right_x, y, 0.45, MUTED)
+
+        return y
+
+    def _draw_footer(self, panel):
+
+        y = self.display_height - 14
+
+        self._divider(panel, y - 20)
+
+        put_text(
+            panel,
+            "Q quit   L landmarks   C calibrate   S sound",
+            (LABEL_X, y),
+            0.42,
+            MUTED
+        )
+
+    def _divider(self, panel, y):
+
+        cv2.line(
+            panel,
+            (LABEL_X, y),
+            (self.panel_width - LABEL_X, y),
+            DIVIDER,
+            1
+        )

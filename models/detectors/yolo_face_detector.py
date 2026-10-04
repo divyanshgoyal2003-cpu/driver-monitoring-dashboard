@@ -1,41 +1,54 @@
 from ultralytics import YOLO
-import cv2
+
+from app.config import (
+    YOLO_FACE_MODEL,
+    FACE_DETECTION_CONFIDENCE,
+    FACE_DETECTION_IMAGE_SIZE
+)
 
 
 class YOLOFaceDetector:
+    """
+    Detects and tracks faces. Returns plain face records; drawing them is
+    left to renderers.overlay_renderer.
+    """
 
-    def __init__(self,
-                 model_path="trained_models/face/face_yolov8n.pt"):
+    def __init__(self, model_path=YOLO_FACE_MODEL,
+                 confidence=FACE_DETECTION_CONFIDENCE,
+                 image_size=FACE_DETECTION_IMAGE_SIZE):
 
         self.model = YOLO(model_path)
+        self.confidence = confidence
+        self.image_size = image_size
 
-    def detect(self, frame, confidence=0.4):
+    def detect(self, frame):
 
         results = self.model.predict(
             source=frame,
-            conf=confidence,
+            conf=self.confidence,
+            imgsz=self.image_size,
             verbose=False,
             device="cpu"
         )
 
-        return self._draw_results(frame, results)
+        return self._parse_results(results)
 
-    def track(self, frame, confidence=0.4):
+    def track(self, frame):
 
         results = self.model.track(
             source=frame,
-            conf=confidence,
+            conf=self.confidence,
+            imgsz=self.image_size,
             persist=True,
             tracker="bytetrack.yaml",
             verbose=False,
             device="cpu"
         )
 
-        return self._draw_results(frame, results)
+        return self._parse_results(results)
 
-    def _draw_results(self, frame, results):
+    def _parse_results(self, results):
 
-        annotated = frame.copy()
         faces = []
 
         for result in results:
@@ -47,8 +60,6 @@ class YOLOFaceDetector:
 
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
 
-                conf = float(box.conf[0])
-
                 track_id = None
 
                 if box.id is not None:
@@ -57,31 +68,8 @@ class YOLOFaceDetector:
                 faces.append({
                     "id": track_id,
                     "bbox": (x1, y1, x2, y2),
-                    "confidence": conf
+                    "confidence": float(box.conf[0]),
+                    "is_driver": False
                 })
 
-                cv2.rectangle(
-                    annotated,
-                    (x1, y1),
-                    (x2, y2),
-                    (0, 255, 0),
-                    2
-                )
-
-                label = (
-                    f"ID:{track_id}  {conf:.2f}"
-                    if track_id is not None
-                    else f"{conf:.2f}"
-                )
-
-                cv2.putText(
-                    annotated,
-                    label,
-                    (x1, y1 - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.6,
-                    (0, 255, 0),
-                    2
-                )
-
-        return annotated, faces
+        return faces
