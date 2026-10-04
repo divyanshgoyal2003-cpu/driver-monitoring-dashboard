@@ -37,6 +37,9 @@ FACE_DETECTION_CONFIDENCE = 0.4
 # MediaPipe Face Landmarker Model
 FACE_LANDMARK_MODEL = "trained_models/face/face_landmarker.task"
 
+# YOLOv8n trained on COCO, used for its "cell phone" class
+OBJECT_DETECTION_MODEL = "trained_models/objects/yolov8n.pt"
+
 # ==========================
 # Blink Detection
 # ==========================
@@ -123,3 +126,19 @@ OFF_ROAD_PITCH = 20.0
 
 # ...and the driver is distracted once it stays off the road this long.
 DISTRACTION_DURATION = 2.0
+
+# ==========================
+# Phone Detection
+# ==========================
+
+PHONE_CONFIDENCE = 0.35
+
+# Object detection is the most expensive model, so it runs on every Nth
+# frame and its result is reused in between.
+PHONE_DETECTION_INTERVAL = 3
+
+# A phone must be seen for this long before it counts as in use, and the
+# usage ends once no phone has been seen for PHONE_RELEASE_TIME. This
+# rides out single-frame false detections and missed frames.
+PHONE_MIN_DURATION = 0.5
+PHONE_RELEASE_TIME = 1.0

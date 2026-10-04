@@ -17,6 +17,7 @@ from app import config
 REQUIRED_MODELS = [
     config.YOLO_FACE_MODEL,
     config.FACE_LANDMARK_MODEL,
+    config.OBJECT_DETECTION_MODEL,
 ]
 
 MODELS_PRESENT = all(os.path.exists(path) for path in REQUIRED_MODELS)
@@ -157,6 +158,40 @@ class PipelineTest(unittest.TestCase):
             mapped += 1
 
         self.assertGreaterEqual(mapped, 1)
+
+    def test_no_phone_in_sample_frame(self):
+
+        _, state = self.process(self.driver_frame)
+
+        self.assertFalse(state["phone"]["detected"])
+        self.assertFalse(state["phone"]["in_use"])
+
+    def test_object_detector_finds_requested_class(self):
+
+        # No phone photo ships with the libraries, so exercise the same
+        # detection path with the "person" class on bus.jpg.
+        import ultralytics
+        from models.detectors.yolo_object_detector import YOLOObjectDetector
+
+        bus = cv2.imread(os.path.join(
+            os.path.dirname(ultralytics.__file__), "assets", "bus.jpg"
+        ))
+
+        detector = YOLOObjectDetector(class_names=("person",))
+        people = detector.detect(bus)
+
+        self.assertGreaterEqual(len(people), 3)
+        self.assertTrue(all(p["label"] == "person" for p in people))
+
+        phones = YOLOObjectDetector().class_ids
+        self.assertEqual(len(phones), 1)
+
+    def test_object_detector_rejects_unknown_class(self):
+
+        from models.detectors.yolo_object_detector import YOLOObjectDetector
+
+        with self.assertRaises(ValueError):
+            YOLOObjectDetector(class_names=("seatbelt",))
 
     def test_other_resolution_is_scaled_for_display(self):
 

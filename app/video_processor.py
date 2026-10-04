@@ -1,7 +1,12 @@
 import time
 
-from app.config import FACE_LANDMARK_MODEL, SHOW_LANDMARKS
+from app.config import (
+    FACE_LANDMARK_MODEL,
+    SHOW_LANDMARKS,
+    PHONE_DETECTION_INTERVAL
+)
 from models.detectors.yolo_face_detector import YOLOFaceDetector
+from models.detectors.yolo_object_detector import YOLOObjectDetector
 from models.landmarks.mediapipe_face_landmarker import MediaPipeFaceLandmarker
 from analytics.blink_detector import BlinkDetector
 from analytics.yawn_detector import YawnDetector
@@ -9,6 +14,7 @@ from analytics.head_pose_estimator import HeadPoseEstimator
 from analytics.gaze_estimator import GazeEstimator
 from analytics.drowsiness_detector import DrowsinessDetector
 from analytics.distraction_detector import DistractionDetector
+from analytics.phone_usage_detector import PhoneUsageDetector
 from renderers.landmark_renderer import LandmarkRenderer
 from renderers.overlay_renderer import OverlayRenderer
 from renderers.dashboard_renderer import DashboardRenderer
@@ -22,12 +28,14 @@ class VideoProcessor:
 
         self.face_detector = YOLOFaceDetector()
         self.landmarker = MediaPipeFaceLandmarker(FACE_LANDMARK_MODEL)
+        self.phone_detector = YOLOObjectDetector()
         self.blink_detector = BlinkDetector()
         self.yawn_detector = YawnDetector()
         self.head_pose_estimator = None
         self.gaze_estimator = GazeEstimator()
         self.drowsiness_detector = DrowsinessDetector()
         self.distraction_detector = DistractionDetector()
+        self.phone_usage_detector = PhoneUsageDetector()
         self.landmark_renderer = LandmarkRenderer()
         self.overlay_renderer = OverlayRenderer()
         self.dashboard_renderer = DashboardRenderer()
@@ -36,6 +44,9 @@ class VideoProcessor:
 
         self.prev_time = None
         self.fps = 0.0
+
+        self.frame_index = 0
+        self.phones = []
 
         # Everything measured on the latest frame, for rendering and
         # logging.
@@ -108,6 +119,18 @@ class VideoProcessor:
             timestamp
         )
 
+        # Phone detection runs on every Nth frame; the last result is
+        # reused in between.
+        if self.frame_index % PHONE_DETECTION_INTERVAL == 0:
+            self.phones = self.phone_detector.detect(frame)
+
+        phone_data = self.phone_usage_detector.update(
+            self.phones,
+            timestamp
+        )
+
+        self.frame_index += 1
+
         self.state = {
             "timestamp": timestamp,
             "fps": self.fps,
@@ -121,7 +144,8 @@ class VideoProcessor:
             "yawn": yawn_data,
             "head_pose": head_pose_data,
             "gaze": gaze_data,
-            "distraction": distraction_data
+            "distraction": distraction_data,
+            "phone": phone_data
         }
 
         annotated = frame.copy()

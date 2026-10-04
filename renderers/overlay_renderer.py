@@ -30,6 +30,9 @@ class OverlayRenderer:
         for face in state["faces"]:
             self._draw_face(frame, face)
 
+        for phone in state["phone"]["phones"]:
+            self._draw_phone(frame, phone, state["phone"]["in_use"])
+
         if state["landmarks"]:
             face_landmarks = state["landmarks"][0]
             self._draw_irises(frame, face_landmarks)
@@ -64,6 +67,17 @@ class OverlayRenderer:
             label = f"DRIVER  {label}"
 
         put_label(frame, label, x1, y1, color)
+
+    def _draw_phone(self, frame, phone, in_use):
+
+        x1, y1, x2, y2 = phone["bbox"]
+
+        color = BAD if in_use else WARN
+
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+
+        put_label(frame, f"PHONE  {phone['confidence']:.2f}", x1, y1,
+                  color)
 
     def _draw_irises(self, frame, face):
 

@@ -100,6 +100,8 @@ class DashboardRenderer:
         rows.append(None)
         rows.extend(self._head_pose_rows(state["head_pose"]))
         rows.extend(self._attention_rows(state["distraction"]))
+        rows.append(None)
+        rows.extend(self._phone_rows(state["phone"]))
 
         return rows
 
@@ -248,6 +250,20 @@ class DashboardRenderer:
             return [("ATTENTION", f"OFF ROAD {seconds:.1f}s", WARN, detail)]
 
         return [("ATTENTION", "ON ROAD", GOOD, detail)]
+
+    def _phone_rows(self, phone):
+
+        count = phone["usage_count"]
+        detail = f"{count} use{'' if count == 1 else 's'}"
+
+        if phone["in_use"]:
+            seconds = phone["usage_duration"]
+            return [("PHONE", f"IN USE {seconds:.0f}s", BAD, detail)]
+
+        if phone["detected"]:
+            return [("PHONE", "DETECTED", WARN, detail)]
+
+        return [("PHONE", "NOT DETECTED", GOOD, detail)]
 
     def _draw_rows(self, panel, y, rows):
 
