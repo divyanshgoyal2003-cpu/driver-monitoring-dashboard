@@ -5,6 +5,7 @@ import cv2
 from app.camera import CameraManager
 from app.config import CAMERA_INDEX, WINDOW_NAME
 from app.video_processor import VideoProcessor
+from utils.alert_sound import AlertSound
 from utils.display import fit_to_screen
 
 
@@ -20,6 +21,12 @@ def parse_args():
         help="webcam index (e.g. 0) or path to a video file"
     )
 
+    parser.add_argument(
+        "--mute",
+        action="store_true",
+        help="start with alert sounds off (press S to toggle)"
+    )
+
     return parser.parse_args()
 
 
@@ -33,6 +40,10 @@ def main():
 
     camera = CameraManager(parse_source(args.source))
     processor = VideoProcessor()
+    alert_sound = AlertSound()
+
+    if args.mute:
+        alert_sound.enabled = False
 
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
     window_sized = False
@@ -56,6 +67,8 @@ def main():
 
             cv2.imshow(WINDOW_NAME, output)
 
+            alert_sound.update(processor.state["risk"]["alerts"])
+
             key = cv2.waitKey(1) & 0xFF
 
             if key in (ord('q'), 27):
@@ -66,6 +79,9 @@ def main():
 
             if key == ord('c'):
                 processor.recalibrate()
+
+            if key == ord('s'):
+                alert_sound.toggle()
 
             # Closing the window with its X button ends the session.
             if cv2.getWindowProperty(WINDOW_NAME, cv2.WND_PROP_VISIBLE) < 1:

@@ -10,6 +10,8 @@ from renderers.theme import (
     GOOD,
     WARN,
     BAD,
+    LEVEL_COLORS,
+    SEVERITY_COLORS,
     put_text,
     put_text_right
 )
@@ -19,6 +21,9 @@ LABEL_X = 16
 VALUE_X = 120
 
 MISSING = "--"
+
+# At most this many alerts are listed at the bottom of the panel.
+MAX_ALERTS = 3
 
 
 class DashboardRenderer:
@@ -46,7 +51,11 @@ class DashboardRenderer:
 
         y = self._draw_header(panel, state)
 
-        y = self._draw_rows(panel, y, self._rows(state))
+        y = self._draw_safety_index(panel, y, state["risk"])
+
+        self._draw_rows(panel, y, self._rows(state))
+
+        self._draw_alerts(panel, state["risk"]["alerts"])
 
         self._draw_footer(panel)
 
@@ -85,6 +94,70 @@ class DashboardRenderer:
         self._divider(panel, y)
 
         return y + 8
+
+    def _draw_safety_index(self, panel, y, risk):
+
+        right_x = self.panel_width - LABEL_X
+        level = risk["level"]
+        score = risk["score"]
+        color = LEVEL_COLORS[level]
+
+        put_text(panel, "SAFETY INDEX", (LABEL_X, y + 20), 0.45, MUTED)
+        put_text_right(panel, level, right_x, y + 20, 0.55, color, 2)
+
+        put_text(panel, f"{score:.0f}", (LABEL_X, y + 64), 1.3, color, 3)
+
+        bar_left = LABEL_X + 95
+        bar_top, bar_bottom = y + 46, y + 60
+
+        cv2.rectangle(panel, (bar_left, bar_top), (right_x, bar_bottom),
+                      DIVIDER, -1)
+
+        filled = bar_left + int((right_x - bar_left) * score / 100)
+
+        if filled > bar_left:
+            cv2.rectangle(panel, (bar_left, bar_top), (filled, bar_bottom),
+                          color, -1)
+
+        y += 76
+        self._divider(panel, y)
+
+        return y + 4
+
+    def _draw_alerts(self, panel, alerts):
+
+        shown = alerts[:MAX_ALERTS]
+        line_height = 22
+
+        bottom = self.display_height - 44
+        top = bottom - 26 - line_height * MAX_ALERTS
+
+        self._divider(panel, top)
+
+        put_text(panel, "ALERTS", (LABEL_X, top + 22), 0.45, MUTED)
+
+        if len(alerts) > MAX_ALERTS:
+            put_text_right(
+                panel,
+                f"+{len(alerts) - MAX_ALERTS} more",
+                self.panel_width - LABEL_X,
+                top + 22,
+                0.45,
+                MUTED
+            )
+
+        y = top + 22
+
+        if not shown:
+            put_text(panel, "None", (LABEL_X, y + line_height), 0.5, GOOD)
+            return
+
+        for alert in shown:
+            y += line_height
+            color = SEVERITY_COLORS[alert["severity"]]
+
+            cv2.circle(panel, (LABEL_X + 5, y - 5), 5, color, -1)
+            put_text(panel, alert["message"], (LABEL_X + 18, y), 0.5, color)
 
     def _rows(self, state):
 
@@ -324,7 +397,7 @@ class DashboardRenderer:
 
         put_text(
             panel,
-            "Q quit   L landmarks   C calibrate",
+            "Q quit   L landmarks   C calibrate   S sound",
             (LABEL_X, y),
             0.42,
             MUTED

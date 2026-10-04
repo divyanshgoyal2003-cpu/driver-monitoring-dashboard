@@ -202,3 +202,47 @@ SEATBELT_MAX_WIDTH = 0.55
 SEATBELT_WINDOW = 3.0
 SEATBELT_ON_RATIO = 0.5
 SEATBELT_OFF_RATIO = 0.2
+
+# ==========================
+# Driver Safety Index
+# ==========================
+
+# Points taken off a perfect score of 100 while each condition is
+# active. Conditions add up; the score never goes below 0.
+RISK_PENALTIES = {
+    "microsleep": 60,
+    "phone": 35,
+    "distracted": 30,
+    "driver_absent": 30,
+    "drowsy": 30,
+    "tired": 15,
+    "no_seatbelt": 15,
+    "frequent_yawning": 10,
+    "negative_emotion": 10,
+}
+
+# Score bands for the risk level: SAFE at or above SAFE_SCORE, CAUTION at
+# or above CAUTION_SCORE, DANGER below.
+SAFE_SCORE = 75
+CAUTION_SCORE = 50
+
+# The displayed score falls quickly when a risk appears and recovers
+# slowly once it is gone (time constants in seconds).
+SCORE_FALL_TIME = 0.5
+SCORE_RISE_TIME = 5.0
+
+# The driver counts as absent once no face has been seen for this long.
+DRIVER_ABSENT_TIME = 2.0
+
+# Yawns within YAWN_RATE_WINDOW that count as frequent yawning.
+YAWN_ALERT_COUNT = 3
+
+# ==========================
+# Alerts
+# ==========================
+
+# Beep for critical and high-severity alerts (Windows only; press S to
+# mute). The cooldown is the minimum gap between beeps, in seconds.
+ENABLE_SOUND_ALERTS = True
+CRITICAL_ALERT_COOLDOWN = 1.0
+HIGH_ALERT_COOLDOWN = 3.0

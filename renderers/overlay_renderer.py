@@ -8,6 +8,7 @@ from renderers.theme import (
     BAD,
     NEUTRAL_BOX,
     ACCENT,
+    SEVERITY_COLORS,
     put_label,
     put_banner
 )
@@ -40,6 +41,8 @@ class OverlayRenderer:
             self._draw_irises(frame, face_landmarks)
             self._draw_gaze(frame, face_landmarks, state)
 
+        self._draw_alert_banner(frame, state)
+
         head_pose = state["head_pose"]
 
         if head_pose and not head_pose["calibrated"]:
@@ -51,6 +54,28 @@ class OverlayRenderer:
             )
 
         return frame
+
+    def _draw_alert_banner(self, frame, state):
+        """The most urgent alert across the top of the frame. Critical
+        alerts flash; low-severity ones only appear in the panel."""
+
+        alerts = [
+            alert for alert in state["risk"]["alerts"]
+            if alert["severity"] != "low"
+        ]
+
+        if not alerts:
+            return
+
+        top = alerts[0]
+
+        if top["severity"] == "critical":
+            # On for a quarter second, off for a quarter second.
+            if int(state["timestamp"] * 4) % 2:
+                return
+
+        put_banner(frame, top["message"], SEVERITY_COLORS[top["severity"]],
+                   y=0, height=44, scale=0.9)
 
     def _draw_face(self, frame, face):
 

@@ -24,6 +24,7 @@ from analytics.distraction_detector import DistractionDetector
 from analytics.phone_usage_detector import PhoneUsageDetector
 from analytics.emotion_analyzer import EmotionAnalyzer
 from analytics.seatbelt_monitor import SeatbeltMonitor
+from risk_engine.scoring import DriverSafetyIndex
 from renderers.landmark_renderer import LandmarkRenderer
 from renderers.overlay_renderer import OverlayRenderer
 from renderers.dashboard_renderer import DashboardRenderer
@@ -49,6 +50,7 @@ class VideoProcessor:
         self.phone_usage_detector = PhoneUsageDetector()
         self.emotion_analyzer = EmotionAnalyzer(EmotionClassifier.LABELS)
         self.seatbelt_monitor = SeatbeltMonitor()
+        self.safety_index = DriverSafetyIndex()
         self.landmark_renderer = LandmarkRenderer()
         self.overlay_renderer = OverlayRenderer()
         self.dashboard_renderer = DashboardRenderer()
@@ -197,6 +199,8 @@ class VideoProcessor:
             "emotion": emotion_data,
             "seatbelt": seatbelt_data
         }
+
+        self.state["risk"] = self.safety_index.update(self.state, timestamp)
 
         annotated = frame.copy()
 

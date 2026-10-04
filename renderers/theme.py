@@ -17,6 +17,19 @@ BAD = (70, 70, 235)
 ACCENT = (230, 180, 70)
 NEUTRAL_BOX = (190, 190, 190)
 
+LEVEL_COLORS = {
+    "SAFE": GOOD,
+    "CAUTION": WARN,
+    "DANGER": BAD,
+}
+
+SEVERITY_COLORS = {
+    "critical": BAD,
+    "high": BAD,
+    "medium": WARN,
+    "low": ACCENT,
+}
+
 
 def put_text(image, text, origin, scale=0.5, color=TEXT, thickness=1):
 
