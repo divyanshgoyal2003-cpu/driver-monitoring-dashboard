@@ -18,6 +18,7 @@ REQUIRED_MODELS = [
     config.YOLO_FACE_MODEL,
     config.FACE_LANDMARK_MODEL,
     config.OBJECT_DETECTION_MODEL,
+    config.EMOTION_MODEL,
 ]
 
 MODELS_PRESENT = all(os.path.exists(path) for path in REQUIRED_MODELS)
@@ -185,6 +186,41 @@ class PipelineTest(unittest.TestCase):
 
         phones = YOLOObjectDetector().class_ids
         self.assertEqual(len(phones), 1)
+
+    def test_emotion_on_driver_frame(self):
+
+        for _ in range(6):
+            _, state = self.process(self.driver_frame)
+
+        emotion = state["emotion"]
+        self.assertIsNotNone(emotion)
+        self.assertEqual(emotion["emotion"], "Neutral")
+        self.assertAlmostEqual(
+            sum(emotion["probabilities"].values()), 1.0, places=5
+        )
+
+    def test_emotion_classifier_on_sample_faces(self):
+
+        # Zidane is shouting, Ancelotti is calm (YOLO face boxes in the
+        # uncropped photo).
+        classifier = self.processor.emotion_classifier
+        labels = classifier.LABELS
+        image = sample_image()
+
+        shouting = classifier.predict(image, (541, 244, 664, 452))
+        calm = classifier.predict(image, (913, 96, 1057, 278))
+
+        self.assertEqual(labels[shouting.argmax()], "Angry")
+        self.assertEqual(labels[calm.argmax()], "Neutral")
+        self.assertAlmostEqual(float(shouting.sum()), 1.0, places=5)
+
+    def test_emotion_classifier_rejects_tiny_faces(self):
+
+        classifier = self.processor.emotion_classifier
+
+        self.assertIsNone(
+            classifier.predict(self.driver_frame, (100, 100, 110, 112))
+        )
 
     def test_object_detector_rejects_unknown_class(self):
 

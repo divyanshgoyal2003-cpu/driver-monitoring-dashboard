@@ -102,6 +102,7 @@ class DashboardRenderer:
         rows.extend(self._attention_rows(state["distraction"]))
         rows.append(None)
         rows.extend(self._phone_rows(state["phone"]))
+        rows.extend(self._emotion_rows(state["emotion"]))
 
         return rows
 
@@ -264,6 +265,20 @@ class DashboardRenderer:
             return [("PHONE", "DETECTED", WARN, detail)]
 
         return [("PHONE", "NOT DETECTED", GOOD, detail)]
+
+    def _emotion_rows(self, emotion):
+
+        if not emotion:
+            return [("EMOTION", MISSING, MUTED, "")]
+
+        return [
+            (
+                "EMOTION",
+                emotion["emotion"].upper(),
+                WARN if emotion["negative"] else GOOD,
+                f"{emotion['confidence'] * 100:.0f}%"
+            )
+        ]
 
     def _draw_rows(self, panel, y, rows):
 

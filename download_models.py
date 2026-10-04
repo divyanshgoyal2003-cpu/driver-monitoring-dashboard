@@ -31,6 +31,11 @@ MODELS = [
         "https://github.com/ultralytics/assets/releases/download"
         "/v8.4.0/yolov8n.pt"
     ),
+    (
+        "trained_models/emotion/emotion-ferplus-8.onnx",
+        "https://github.com/onnx/models/raw/main/validated/vision"
+        "/body_analysis/emotion_ferplus/model/emotion-ferplus-8.onnx"
+    ),
 ]
 
 

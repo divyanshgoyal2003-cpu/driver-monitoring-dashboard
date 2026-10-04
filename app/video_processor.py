@@ -3,11 +3,13 @@ import time
 from app.config import (
     FACE_LANDMARK_MODEL,
     SHOW_LANDMARKS,
-    PHONE_DETECTION_INTERVAL
+    PHONE_DETECTION_INTERVAL,
+    EMOTION_INTERVAL
 )
 from models.detectors.yolo_face_detector import YOLOFaceDetector
 from models.detectors.yolo_object_detector import YOLOObjectDetector
 from models.landmarks.mediapipe_face_landmarker import MediaPipeFaceLandmarker
+from models.classifiers.emotion_classifier import EmotionClassifier
 from analytics.blink_detector import BlinkDetector
 from analytics.yawn_detector import YawnDetector
 from analytics.head_pose_estimator import HeadPoseEstimator
@@ -15,6 +17,7 @@ from analytics.gaze_estimator import GazeEstimator
 from analytics.drowsiness_detector import DrowsinessDetector
 from analytics.distraction_detector import DistractionDetector
 from analytics.phone_usage_detector import PhoneUsageDetector
+from analytics.emotion_analyzer import EmotionAnalyzer
 from renderers.landmark_renderer import LandmarkRenderer
 from renderers.overlay_renderer import OverlayRenderer
 from renderers.dashboard_renderer import DashboardRenderer
@@ -29,6 +32,7 @@ class VideoProcessor:
         self.face_detector = YOLOFaceDetector()
         self.landmarker = MediaPipeFaceLandmarker(FACE_LANDMARK_MODEL)
         self.phone_detector = YOLOObjectDetector()
+        self.emotion_classifier = EmotionClassifier()
         self.blink_detector = BlinkDetector()
         self.yawn_detector = YawnDetector()
         self.head_pose_estimator = None
@@ -36,6 +40,7 @@ class VideoProcessor:
         self.drowsiness_detector = DrowsinessDetector()
         self.distraction_detector = DistractionDetector()
         self.phone_usage_detector = PhoneUsageDetector()
+        self.emotion_analyzer = EmotionAnalyzer(EmotionClassifier.LABELS)
         self.landmark_renderer = LandmarkRenderer()
         self.overlay_renderer = OverlayRenderer()
         self.dashboard_renderer = DashboardRenderer()
@@ -82,7 +87,8 @@ class VideoProcessor:
                 largest["bbox"]
             )
 
-        driver_id = self._mark_driver(faces, landmarks, w, h)
+        driver = self._mark_driver(faces, landmarks, w, h)
+        driver_box = self._driver_box(driver, landmarks, w, h)
 
         if self.head_pose_estimator is None:
             self.head_pose_estimator = HeadPoseEstimator(w, h)
@@ -129,6 +135,23 @@ class VideoProcessor:
             timestamp
         )
 
+        # Staggered from phone detection so the two models do not run on
+        # the same frame.
+        emotion_probabilities = None
+
+        if (driver_box is not None
+                and self.frame_index % EMOTION_INTERVAL
+                == EMOTION_INTERVAL // 2):
+            emotion_probabilities = self.emotion_classifier.predict(
+                frame,
+                driver_box
+            )
+
+        emotion_data = self.emotion_analyzer.update(
+            emotion_probabilities,
+            bool(landmarks)
+        )
+
         self.frame_index += 1
 
         self.state = {
@@ -136,7 +159,8 @@ class VideoProcessor:
             "fps": self.fps,
             "faces": faces,
             "face_count": len(faces),
-            "driver_id": driver_id,
+            "driver_id": driver["id"] if driver else None,
+            "driver_box": driver_box,
             "face_detected": bool(landmarks),
             "landmarks": landmarks,
             "blink": blink_data,
@@ -145,7 +169,8 @@ class VideoProcessor:
             "head_pose": head_pose_data,
             "gaze": gaze_data,
             "distraction": distraction_data,
-            "phone": phone_data
+            "phone": phone_data,
+            "emotion": emotion_data
         }
 
         annotated = frame.copy()
@@ -193,8 +218,7 @@ class VideoProcessor:
     def _mark_driver(self, faces, landmarks, width, height):
         """
         The analysed face is the one MediaPipe returned. Mark the YOLO
-        box that contains its nose as the driver and return that box's
-        track ID.
+        box that contains its nose as the driver and return that face.
         """
 
         if not landmarks:
@@ -208,6 +232,24 @@ class VideoProcessor:
 
             if x1 <= nx <= x2 and y1 <= ny <= y2:
                 face["is_driver"] = True
-                return face["id"]
+                return face
 
         return None
+
+    @staticmethod
+    def _driver_box(driver, landmarks, width, height):
+        """
+        The driver's face box: the YOLO box when there is one, otherwise
+        the bounding box of the landmarks. None without a face.
+        """
+
+        if driver is not None:
+            return driver["bbox"]
+
+        if not landmarks:
+            return None
+
+        xs = [p.x * width for p in landmarks[0]]
+        ys = [p.y * height for p in landmarks[0]]
+
+        return (int(min(xs)), int(min(ys)), int(max(xs)), int(max(ys)))

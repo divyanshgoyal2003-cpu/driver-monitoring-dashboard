@@ -40,6 +40,9 @@ FACE_LANDMARK_MODEL = "trained_models/face/face_landmarker.task"
 # YOLOv8n trained on COCO, used for its "cell phone" class
 OBJECT_DETECTION_MODEL = "trained_models/objects/yolov8n.pt"
 
+# FER+ facial expression model (ONNX, run with OpenCV's DNN module)
+EMOTION_MODEL = "trained_models/emotion/emotion-ferplus-8.onnx"
+
 # ==========================
 # Blink Detection
 # ==========================
@@ -142,3 +145,24 @@ PHONE_DETECTION_INTERVAL = 3
 # rides out single-frame false detections and missed frames.
 PHONE_MIN_DURATION = 0.5
 PHONE_RELEASE_TIME = 1.0
+
+# ==========================
+# Emotion Recognition
+# ==========================
+
+# The classifier runs on every Nth frame, staggered from phone detection
+# so the two models do not land on the same frame.
+EMOTION_INTERVAL = 3
+
+# Square face crop, as a multiple of the face box's longer side. FER+
+# was trained on tightly cropped faces.
+EMOTION_FACE_MARGIN = 1.1
+
+# Weight of each new prediction in the running average (0..1). Lower is
+# steadier but slower to react.
+EMOTION_SMOOTHING = 0.3
+
+# Emotions that can impair driving. They are flagged once the smoothed
+# confidence reaches EMOTION_ALERT_CONFIDENCE.
+NEGATIVE_EMOTIONS = ("Angry", "Sad", "Fearful", "Disgusted")
+EMOTION_ALERT_CONFIDENCE = 0.5
