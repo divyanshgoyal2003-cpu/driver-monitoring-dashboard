@@ -246,3 +246,17 @@ YAWN_ALERT_COUNT = 3
 ENABLE_SOUND_ALERTS = True
 CRITICAL_ALERT_COOLDOWN = 1.0
 HIGH_ALERT_COOLDOWN = 3.0
+
+# ==========================
+# Session Logging
+# ==========================
+
+# Every run is saved here for the analytics dashboard (data/ is
+# gitignored).
+DATABASE_PATH = "data/driver_monitoring.db"
+
+# A snapshot of the measurements is stored this often (seconds); events
+# are stored as they happen. Writes are committed every
+# DATABASE_COMMIT_INTERVAL seconds, so a crash loses at most that much.
+METRICS_LOG_INTERVAL = 1.0
+DATABASE_COMMIT_INTERVAL = 5.0

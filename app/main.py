@@ -3,8 +3,10 @@ import argparse
 import cv2
 
 from app.camera import CameraManager
-from app.config import CAMERA_INDEX, WINDOW_NAME
+from app.config import CAMERA_INDEX, WINDOW_NAME, DATABASE_PATH
 from app.video_processor import VideoProcessor
+from database.database import Database
+from database.session_logger import SessionLogger
 from utils.alert_sound import AlertSound
 from utils.display import fit_to_screen
 
@@ -27,6 +29,19 @@ def parse_args():
         help="start with alert sounds off (press S to toggle)"
     )
 
+    parser.add_argument(
+        "--db",
+        default=DATABASE_PATH,
+        help=f"session database for the analytics dashboard "
+             f"(default: {DATABASE_PATH})"
+    )
+
+    parser.add_argument(
+        "--no-log",
+        action="store_true",
+        help="do not save this session to the database"
+    )
+
     return parser.parse_args()
 
 
@@ -45,6 +60,13 @@ def main():
     if args.mute:
         alert_sound.enabled = False
 
+    database = None
+    logger = None
+
+    if not args.no_log:
+        database = Database(args.db)
+        logger = SessionLogger(database, args.source)
+
     cv2.namedWindow(WINDOW_NAME, cv2.WINDOW_NORMAL)
     window_sized = False
 
@@ -57,6 +79,9 @@ def main():
                 break
 
             output = processor.process(frame, camera.last_timestamp)
+
+            if logger:
+                logger.log(processor.state)
 
             if not window_sized:
                 cv2.resizeWindow(
@@ -91,6 +116,12 @@ def main():
         camera.release()
         processor.close()
         cv2.destroyAllWindows()
+
+        if logger:
+            logger.close()
+            database.close()
+            print(f"Session {logger.session_id} saved to {args.db}. "
+                  f"View it with: streamlit run dashboard/dashboard.py")
 
 
 if __name__ == "__main__":

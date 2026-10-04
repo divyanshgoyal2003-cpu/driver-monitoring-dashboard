@@ -6,3 +6,5 @@ mediapipe>=0.10.14
 scipy>=1.11
 huggingface_hub>=0.23
 lap>=0.5.12
+streamlit>=1.46
+altair>=5.0
