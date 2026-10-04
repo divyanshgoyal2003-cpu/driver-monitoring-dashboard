@@ -34,6 +34,10 @@ PANEL_WIDTH = 400
 YOLO_FACE_MODEL = "trained_models/face/face_yolov8n.pt"
 FACE_DETECTION_CONFIDENCE = 0.4
 
+# A driver's face is large in the frame, so face detection runs at 320 px
+# instead of YOLO's default 640: the same faces, in about half the time.
+FACE_DETECTION_IMAGE_SIZE = 320
+
 # MediaPipe Face Landmarker Model
 FACE_LANDMARK_MODEL = "trained_models/face/face_landmarker.task"
 
@@ -42,6 +46,11 @@ OBJECT_DETECTION_MODEL = "trained_models/objects/yolov8n.pt"
 
 # FER+ facial expression model (ONNX, run with OpenCV's DNN module)
 EMOTION_MODEL = "trained_models/emotion/emotion-ferplus-8.onnx"
+
+# Importing ultralytics switches OpenCV's own threading off (to suit its
+# training data loaders); it is switched back on with this many threads
+# so the emotion model runs faster.
+OPENCV_THREADS = 4
 
 # ==========================
 # Blink Detection
@@ -166,3 +175,30 @@ EMOTION_SMOOTHING = 0.3
 # confidence reaches EMOTION_ALERT_CONFIDENCE.
 NEGATIVE_EMOTIONS = ("Angry", "Sad", "Fearful", "Disgusted")
 EMOTION_ALERT_CONFIDENCE = 0.5
+
+# ==========================
+# Seatbelt Detection
+# ==========================
+
+# Runs on every Nth frame, staggered from phone and emotion detection.
+SEATBELT_INTERVAL = 3
+
+# The strap's edges must lean between these angles from horizontal. A
+# shoulder-to-hip strap seen from the front sits at about 55-65 degrees;
+# the wider range allows for off-centre cameras. Near-vertical edges
+# (ties, shirt plackets) fall outside it.
+SEATBELT_MIN_ANGLE = 30.0
+SEATBELT_MAX_ANGLE = 70.0
+
+# Strap width (distance between its two edges) as a fraction of the
+# face width. A belt is ~48 mm; a face is ~150 mm.
+SEATBELT_MIN_WIDTH = 0.15
+SEATBELT_MAX_WIDTH = 0.55
+
+# Per-frame results are pooled over this window: the belt is ON when it
+# was found in at least ON_RATIO of the frames where the chest was
+# visible, and OFF at or below OFF_RATIO (in between, the previous
+# status holds).
+SEATBELT_WINDOW = 3.0
+SEATBELT_ON_RATIO = 0.5
+SEATBELT_OFF_RATIO = 0.2

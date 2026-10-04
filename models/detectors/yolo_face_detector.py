@@ -1,6 +1,10 @@
 from ultralytics import YOLO
 
-from app.config import YOLO_FACE_MODEL, FACE_DETECTION_CONFIDENCE
+from app.config import (
+    YOLO_FACE_MODEL,
+    FACE_DETECTION_CONFIDENCE,
+    FACE_DETECTION_IMAGE_SIZE
+)
 
 
 class YOLOFaceDetector:
@@ -10,16 +14,19 @@ class YOLOFaceDetector:
     """
 
     def __init__(self, model_path=YOLO_FACE_MODEL,
-                 confidence=FACE_DETECTION_CONFIDENCE):
+                 confidence=FACE_DETECTION_CONFIDENCE,
+                 image_size=FACE_DETECTION_IMAGE_SIZE):
 
         self.model = YOLO(model_path)
         self.confidence = confidence
+        self.image_size = image_size
 
     def detect(self, frame):
 
         results = self.model.predict(
             source=frame,
             conf=self.confidence,
+            imgsz=self.image_size,
             verbose=False,
             device="cpu"
         )
@@ -31,6 +38,7 @@ class YOLOFaceDetector:
         results = self.model.track(
             source=frame,
             conf=self.confidence,
+            imgsz=self.image_size,
             persist=True,
             tracker="bytetrack.yaml",
             verbose=False,

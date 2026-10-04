@@ -92,6 +92,9 @@ class PipelineTest(unittest.TestCase):
         # the head is turned to the driver's left (negative yaw).
         self.assertLess(head_pose["yaw"], -5)
 
+        # A close-up: too little chest in view to judge the seatbelt.
+        self.assertEqual(state["seatbelt"]["status"], "UNKNOWN")
+
     def test_frame_without_face(self):
 
         blank = np.zeros((720, 1280, 3), dtype=np.uint8)

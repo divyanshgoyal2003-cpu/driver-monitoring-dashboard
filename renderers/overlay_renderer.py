@@ -33,6 +33,8 @@ class OverlayRenderer:
         for phone in state["phone"]["phones"]:
             self._draw_phone(frame, phone, state["phone"]["in_use"])
 
+        self._draw_seatbelt(frame, state["seatbelt"])
+
         if state["landmarks"]:
             face_landmarks = state["landmarks"][0]
             self._draw_irises(frame, face_landmarks)
@@ -78,6 +80,24 @@ class OverlayRenderer:
 
         put_label(frame, f"PHONE  {phone['confidence']:.2f}", x1, y1,
                   color)
+
+    def _draw_seatbelt(self, frame, seatbelt):
+
+        observation = seatbelt["observation"]
+
+        if not observation or not observation["visible"]:
+            return
+
+        x1, y1, x2, y2 = observation["roi"]
+
+        color = GOOD if seatbelt["status"] == "ON" else NEUTRAL_BOX
+
+        cv2.rectangle(frame, (x1, y1), (x2, y2), color, 1)
+
+        if observation["strap"]:
+            for sx1, sy1, sx2, sy2 in observation["strap"]:
+                cv2.line(frame, (sx1, sy1), (sx2, sy2), GOOD, 3,
+                         cv2.LINE_AA)
 
     def _draw_irises(self, frame, face):
 

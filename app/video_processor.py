@@ -1,13 +1,18 @@
 import time
 
+import cv2
+
 from app.config import (
     FACE_LANDMARK_MODEL,
+    OPENCV_THREADS,
     SHOW_LANDMARKS,
     PHONE_DETECTION_INTERVAL,
-    EMOTION_INTERVAL
+    EMOTION_INTERVAL,
+    SEATBELT_INTERVAL
 )
 from models.detectors.yolo_face_detector import YOLOFaceDetector
 from models.detectors.yolo_object_detector import YOLOObjectDetector
+from models.detectors.seatbelt_detector import SeatbeltDetector
 from models.landmarks.mediapipe_face_landmarker import MediaPipeFaceLandmarker
 from models.classifiers.emotion_classifier import EmotionClassifier
 from analytics.blink_detector import BlinkDetector
@@ -18,6 +23,7 @@ from analytics.drowsiness_detector import DrowsinessDetector
 from analytics.distraction_detector import DistractionDetector
 from analytics.phone_usage_detector import PhoneUsageDetector
 from analytics.emotion_analyzer import EmotionAnalyzer
+from analytics.seatbelt_monitor import SeatbeltMonitor
 from renderers.landmark_renderer import LandmarkRenderer
 from renderers.overlay_renderer import OverlayRenderer
 from renderers.dashboard_renderer import DashboardRenderer
@@ -33,6 +39,7 @@ class VideoProcessor:
         self.landmarker = MediaPipeFaceLandmarker(FACE_LANDMARK_MODEL)
         self.phone_detector = YOLOObjectDetector()
         self.emotion_classifier = EmotionClassifier()
+        self.seatbelt_detector = SeatbeltDetector()
         self.blink_detector = BlinkDetector()
         self.yawn_detector = YawnDetector()
         self.head_pose_estimator = None
@@ -41,11 +48,15 @@ class VideoProcessor:
         self.distraction_detector = DistractionDetector()
         self.phone_usage_detector = PhoneUsageDetector()
         self.emotion_analyzer = EmotionAnalyzer(EmotionClassifier.LABELS)
+        self.seatbelt_monitor = SeatbeltMonitor()
         self.landmark_renderer = LandmarkRenderer()
         self.overlay_renderer = OverlayRenderer()
         self.dashboard_renderer = DashboardRenderer()
 
         self.show_landmarks = SHOW_LANDMARKS
+
+        # ultralytics turned OpenCV threading off when it was imported.
+        cv2.setNumThreads(OPENCV_THREADS)
 
         self.prev_time = None
         self.fps = 0.0
@@ -152,6 +163,19 @@ class VideoProcessor:
             bool(landmarks)
         )
 
+        seatbelt_observation = None
+
+        if self.frame_index % SEATBELT_INTERVAL == SEATBELT_INTERVAL - 1:
+            seatbelt_observation = self.seatbelt_detector.detect(
+                frame,
+                driver_box
+            )
+
+        seatbelt_data = self.seatbelt_monitor.update(
+            seatbelt_observation,
+            timestamp
+        )
+
         self.frame_index += 1
 
         self.state = {
@@ -170,7 +194,8 @@ class VideoProcessor:
             "gaze": gaze_data,
             "distraction": distraction_data,
             "phone": phone_data,
-            "emotion": emotion_data
+            "emotion": emotion_data,
+            "seatbelt": seatbelt_data
         }
 
         annotated = frame.copy()

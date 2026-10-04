@@ -103,6 +103,7 @@ class DashboardRenderer:
         rows.append(None)
         rows.extend(self._phone_rows(state["phone"]))
         rows.extend(self._emotion_rows(state["emotion"]))
+        rows.extend(self._seatbelt_rows(state["seatbelt"]))
 
         return rows
 
@@ -279,6 +280,18 @@ class DashboardRenderer:
                 f"{emotion['confidence'] * 100:.0f}%"
             )
         ]
+
+    def _seatbelt_rows(self, seatbelt):
+
+        status = seatbelt["status"]
+
+        if status == "ON":
+            return [("SEATBELT", "ON", GOOD, "")]
+
+        if status == "OFF":
+            return [("SEATBELT", "NOT DETECTED", WARN, "")]
+
+        return [("SEATBELT", "UNKNOWN", MUTED, "chest not in view")]
 
     def _draw_rows(self, panel, y, rows):
 
