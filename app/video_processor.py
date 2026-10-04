@@ -6,6 +6,9 @@ from models.landmarks.mediapipe_face_landmarker import MediaPipeFaceLandmarker
 from analytics.blink_detector import BlinkDetector
 from analytics.yawn_detector import YawnDetector
 from analytics.head_pose_estimator import HeadPoseEstimator
+from analytics.gaze_estimator import GazeEstimator
+from analytics.drowsiness_detector import DrowsinessDetector
+from analytics.distraction_detector import DistractionDetector
 from renderers.landmark_renderer import LandmarkRenderer
 from renderers.overlay_renderer import OverlayRenderer
 from renderers.dashboard_renderer import DashboardRenderer
@@ -22,6 +25,9 @@ class VideoProcessor:
         self.blink_detector = BlinkDetector()
         self.yawn_detector = YawnDetector()
         self.head_pose_estimator = None
+        self.gaze_estimator = GazeEstimator()
+        self.drowsiness_detector = DrowsinessDetector()
+        self.distraction_detector = DistractionDetector()
         self.landmark_renderer = LandmarkRenderer()
         self.overlay_renderer = OverlayRenderer()
         self.dashboard_renderer = DashboardRenderer()
@@ -86,6 +92,21 @@ class VideoProcessor:
             landmarks,
             timestamp
         )
+        gaze_data = self.gaze_estimator.estimate(
+            landmarks,
+            w,
+            h,
+            head_pose_data
+        )
+        drowsiness_data = self.drowsiness_detector.update(
+            blink_data,
+            timestamp
+        )
+        distraction_data = self.distraction_detector.update(
+            head_pose_data,
+            gaze_data,
+            timestamp
+        )
 
         self.state = {
             "timestamp": timestamp,
@@ -94,9 +115,13 @@ class VideoProcessor:
             "face_count": len(faces),
             "driver_id": driver_id,
             "face_detected": bool(landmarks),
+            "landmarks": landmarks,
             "blink": blink_data,
+            "drowsiness": drowsiness_data,
             "yawn": yawn_data,
-            "head_pose": head_pose_data
+            "head_pose": head_pose_data,
+            "gaze": gaze_data,
+            "distraction": distraction_data
         }
 
         annotated = frame.copy()

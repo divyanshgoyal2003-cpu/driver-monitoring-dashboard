@@ -84,3 +84,42 @@ HEAD_PITCH_THRESHOLD = 15.0
 # caused by the camera not sitting directly in front of the face.
 HEAD_POSE_CALIBRATION_TIME = 3.0
 HEAD_POSE_MAX_OFFSET = 25.0
+
+# ==========================
+# Eye Tracking (Gaze)
+# ==========================
+
+# The iris is modelled as sitting on a sphere whose radius is this
+# fraction of the eye's corner-to-corner width (eyeball radius ~12 mm,
+# eye opening ~30 mm). An iris offset of d eye-widths from the centre
+# then means an eye rotation of asin(d / 0.4).
+GAZE_EYE_RADIUS_RATIO = 0.4
+
+# Combined head + eye yaw, in degrees, beyond which the gaze is LEFT or
+# RIGHT.
+GAZE_THRESHOLD = 15.0
+
+# ==========================
+# Drowsiness
+# ==========================
+
+# PERCLOS: the share of time the eyes were closed over the last minute.
+# An alert driver sits around 5% from normal blinking.
+PERCLOS_WINDOW = 60.0
+PERCLOS_TIRED = 0.15
+PERCLOS_DROWSY = 0.25
+
+# PERCLOS is only judged once this much eye data has been collected.
+PERCLOS_MIN_DATA = 10.0
+
+# ==========================
+# Distraction
+# ==========================
+
+# The gaze counts as off the road beyond these angles (degrees of
+# combined head + eye yaw, or of head pitch up or down)...
+OFF_ROAD_YAW = 25.0
+OFF_ROAD_PITCH = 20.0
+
+# ...and the driver is distracted once it stays off the road this long.
+DISTRACTION_DURATION = 2.0

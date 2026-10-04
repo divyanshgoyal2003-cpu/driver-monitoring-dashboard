@@ -142,3 +142,23 @@ def feed(detector, face, start, duration, fps=30.0):
         t += 1.0 / fps
 
     return result, t
+
+
+def set_irises(face, ratio, y=300.0):
+    """
+    Place both eyes' corners and iris centres so each iris sits at
+    `ratio` along its corner-to-corner line (0 = image-left corner,
+    1 = image-right corner).
+    """
+
+    eyes = [
+        (468, 33, 133, 530.0),
+        (473, 362, 263, 690.0),
+    ]
+
+    for iris, left, right, left_x in eyes:
+        set_pixel(face, left, left_x, y)
+        set_pixel(face, right, left_x + 60.0, y)
+        set_pixel(face, iris, left_x + 60.0 * ratio, y)
+
+    return face

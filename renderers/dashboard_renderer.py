@@ -93,10 +93,13 @@ class DashboardRenderer:
         rows.extend(self._face_rows(state))
         rows.append(None)
         rows.extend(self._eye_rows(state["blink"]))
+        rows.extend(self._gaze_rows(state["gaze"]))
+        rows.extend(self._drowsiness_rows(state["drowsiness"]))
         rows.append(None)
         rows.extend(self._yawn_rows(state["yawn"]))
         rows.append(None)
         rows.extend(self._head_pose_rows(state["head_pose"]))
+        rows.extend(self._attention_rows(state["distraction"]))
 
         return rows
 
@@ -140,6 +143,43 @@ class DashboardRenderer:
                 f"{blink['blink_rate']:.0f} / min"
             )
         ]
+
+    def _gaze_rows(self, gaze):
+
+        if not gaze:
+            return [("GAZE", MISSING, MUTED, "")]
+
+        direction = gaze["direction"]
+
+        return [
+            (
+                "GAZE",
+                direction,
+                GOOD if direction == "CENTER" else WARN,
+                f"yaw {gaze['gaze_yaw']:+.0f}"
+            )
+        ]
+
+    def _drowsiness_rows(self, drowsiness):
+
+        if not drowsiness:
+            return [("DROWSINESS", MISSING, MUTED, "")]
+
+        state = drowsiness["state"]
+
+        color = {
+            "AWAKE": GOOD,
+            "TIRED": WARN,
+            "DROWSY": BAD,
+            "MICROSLEEP": BAD
+        }[state]
+
+        detail = f"PERCLOS {drowsiness['perclos'] * 100:.0f}%"
+
+        if not drowsiness["perclos_ready"]:
+            detail += " (warming up)"
+
+        return [("DROWSINESS", state, color, detail)]
 
     def _yawn_rows(self, yawn):
 
@@ -191,6 +231,23 @@ class DashboardRenderer:
                 "deg"
             )
         ]
+
+    def _attention_rows(self, distraction):
+
+        if not distraction:
+            return [("ATTENTION", MISSING, MUTED, "")]
+
+        count = distraction["distraction_count"]
+        detail = f"{count} distraction{'' if count == 1 else 's'}"
+
+        if distraction["distracted"]:
+            return [("ATTENTION", "DISTRACTED", BAD, detail)]
+
+        if not distraction["eyes_on_road"]:
+            seconds = distraction["off_road_duration"]
+            return [("ATTENTION", f"OFF ROAD {seconds:.1f}s", WARN, detail)]
+
+        return [("ATTENTION", "ON ROAD", GOOD, detail)]
 
     def _draw_rows(self, panel, y, rows):
 
