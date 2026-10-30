@@ -27,7 +27,9 @@ import csv
 POINT_LABELS = ("blink", "yawn")
 
 # Things that last, matched by how much of the time the two agree.
-INTERVAL_LABELS = ("microsleep", "distracted", "phone", "no_seatbelt")
+INTERVAL_LABELS = (
+    "microsleep", "distracted", "phone", "no_seatbelt", "camera_blocked"
+)
 
 LABELS = POINT_LABELS + INTERVAL_LABELS
 

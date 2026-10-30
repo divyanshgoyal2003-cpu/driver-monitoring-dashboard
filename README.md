@@ -226,7 +226,7 @@ start,end,label
 40.2,48.0,phone
 ```
 
-Valid labels are `blink`, `yawn`, `microsleep`, `distracted`, `phone` and `no_seatbelt`. The report gives precision, recall and F1 for each: blinks and yawns are paired with their labels inside a ±0.5 s tolerance, while episodes are scored on how much of the time the two agree.
+Valid labels are `blink`, `yawn`, `microsleep`, `distracted`, `phone`, `no_seatbelt` and `camera_blocked`. The report gives precision, recall and F1 for each: blinks and yawns are paired with their labels inside a ±0.5 s tolerance, while episodes are scored on how much of the time the two agree.
 
 The same pass also runs **both** scoring engines over the identical frames and compares them, so neither can be accused of having had the easier video. Leave `--labels` off to get just that comparison and a summary of what was detected.
 
@@ -238,7 +238,7 @@ The same pass also runs **both** scoring engines over the identical frames and c
 python -m unittest discover -s tests -t .
 ```
 
-There are 215 tests. Each analyser is tested on synthetic landmarks with known geometry, including head pose sign conventions, PERCLOS windows and microsleep episodes. Seatbelt tests use synthetic straps painted onto real photos. The safety index, the database and the dashboard (run headless with Streamlit's `AppTest`) are covered too. An end-to-end test runs the real models on a sample photo that ships with ultralytics.
+There are 335 tests. Each analyser is tested on synthetic landmarks with known geometry, including head pose sign conventions, PERCLOS windows and microsleep episodes. Seatbelt tests use synthetic straps painted onto real photos. The safety index, the weighting layers, the camera-obstruction and low-light modules, the forecast client (driven with canned responses, never the network), the alert patterns, the database and the dashboard (run headless with Streamlit's `AppTest`) are covered too. An end-to-end test runs the real models on a sample photo that ships with ultralytics.
 
 ## Demo guide
 

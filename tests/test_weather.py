@@ -6,8 +6,10 @@ argument, so these drive it with canned responses and deliberate
 failures.
 """
 
+import io
 import threading
 import unittest
+from contextlib import redirect_stderr
 
 from utils import weather as weather_module
 from utils.weather import WeatherService, classify
@@ -181,7 +183,8 @@ class WeatherServiceTest(unittest.TestCase):
 
         service = WeatherService(latitude=1.0, longitude=1.0, fetch=explode)
 
-        service._refresh_once()
+        with redirect_stderr(io.StringIO()):
+            service._refresh_once()
 
         weather, status = service.reading()
 
@@ -202,7 +205,8 @@ class WeatherServiceTest(unittest.TestCase):
         service._refresh_once()
         self.assertEqual(service.reading(), ("snow", weather_module.OK))
 
-        service._refresh_once()
+        with redirect_stderr(io.StringIO()):
+            service._refresh_once()
 
         self.assertEqual(service.reading(), ("snow", weather_module.STALE))
 
@@ -213,9 +217,59 @@ class WeatherServiceTest(unittest.TestCase):
             fetch=lambda lat, lon, timeout: observation(4242)
         )
 
-        service._refresh_once()
+        with redirect_stderr(io.StringIO()):
+            service._refresh_once()
 
         self.assertEqual(service.reading(), (None, weather_module.FAILED))
+
+    def test_an_outage_is_announced_once_not_every_refresh(self):
+        """
+        It retries every fifteen minutes for the whole drive. Saying so
+        each time would bury everything else on the console.
+        """
+
+        def explode(latitude, longitude, timeout):
+            raise OSError("no route to host")
+
+        service = WeatherService(latitude=1.0, longitude=1.0, fetch=explode)
+        stderr = io.StringIO()
+
+        with redirect_stderr(stderr):
+            for _ in range(4):
+                service._refresh_once()
+
+        said = stderr.getvalue().strip().splitlines()
+
+        self.assertEqual(len(said), 1)
+        self.assertIn("no route to host", said[0])
+
+    def test_a_later_outage_is_announced_again(self):
+        responses = [observation(0)]
+
+        def fetch(latitude, longitude, timeout):
+            if responses:
+                return responses.pop()
+            raise OSError("gone again")
+
+        service = WeatherService(latitude=1.0, longitude=1.0, fetch=fetch)
+        stderr = io.StringIO()
+
+        with redirect_stderr(stderr):
+            service._refresh_once()   # works, clears the reported flag
+            service._refresh_once()   # fails, worth hearing about
+
+        self.assertIn("gone again", stderr.getvalue())
+
+    def test_an_unconfigured_service_is_not_called_a_forecast(self):
+        """
+        Without coordinates there is no forecast to be off or offline.
+        Reporting one would describe a feature the driver never asked
+        for, and would keep the panel's WEATHER row up for no reason.
+        """
+
+        self.assertEqual(
+            WeatherService().provenance(), (None, "default")
+        )
 
     def test_provenance_labels_each_state(self):
         service = WeatherService(latitude=1.0, longitude=1.0)

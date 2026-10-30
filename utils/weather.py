@@ -22,6 +22,7 @@ says so rather than quietly reporting clear skies.
 """
 
 import json
+import sys
 import threading
 import urllib.parse
 import urllib.request
@@ -133,6 +134,9 @@ class WeatherService:
         self._status = OFF
         self._error = None
 
+        # So an outage is reported once rather than every refresh.
+        self._reported = False
+
         self._stop = threading.Event()
         self._thread = None
 
@@ -183,6 +187,12 @@ class WeatherService:
         than being reinvented by every caller.
         """
 
+        if not self.configured:
+            # No coordinates were ever given, so there is no forecast to
+            # be off or offline. Saying so would describe a feature the
+            # driver never asked for.
+            return None, "default"
+
         weather, status = self.reading()
 
         if weather is not None:
@@ -218,18 +228,43 @@ class WeatherService:
             # shape all fail differently, and none of them is worth
             # taking the driver monitor down for. The last good reading
             # is kept and the status says it is no longer fresh.
-            with self._lock:
-                self._error = f"{type(error).__name__}: {error}"
-                self._status = STALE if self._weather is not None else FAILED
+            self._fail(f"{type(error).__name__}: {error}")
+
+            return
+
+        if weather is None:
+            # Reached the API but could not read the answer.
+            self._fail("unrecognised forecast code")
 
             return
 
         with self._lock:
-            if weather is None:
-                # Reached the API but could not read the answer.
-                self._status = STALE if self._weather is not None else FAILED
-                self._error = "unrecognised forecast code"
-            else:
-                self._weather = weather
-                self._status = OK
-                self._error = None
+            self._weather = weather
+            self._status = OK
+            self._error = None
+
+            # A later outage is worth hearing about again.
+            self._reported = False
+
+    def _fail(self, reason):
+        """
+        Record an outage, and say so once.
+
+        The panel can only show that the forecast is offline, not why.
+        A wrong coordinate and an unplugged network look identical
+        there, and both are things the driver can act on.
+        """
+
+        with self._lock:
+            self._error = reason
+            self._status = STALE if self._weather is not None else FAILED
+
+            announce = not self._reported
+            self._reported = True
+
+        if announce:
+            print(
+                f"Weather forecast unavailable ({reason}). Press W to "
+                f"declare the conditions yourself.",
+                file=sys.stderr
+            )
