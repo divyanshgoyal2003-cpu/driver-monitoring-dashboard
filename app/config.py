@@ -40,6 +40,7 @@ FACE_DETECTION_IMAGE_SIZE = 320
 
 # MediaPipe Face Landmarker Model
 FACE_LANDMARK_MODEL = "trained_models/face/face_landmarker.task"
+HAND_LANDMARK_MODEL = "trained_models/hands/hand_landmarker.task"
 
 # YOLOv8n trained on COCO, used for its "cell phone" class
 OBJECT_DETECTION_MODEL = "trained_models/objects/yolov8n.pt"
@@ -239,6 +240,38 @@ EMOTION_ALERT_CONFIDENCE = 0.5
 # leaving the rest free.
 SEATBELT_INTERVAL = 6
 
+# ==========================
+# Hands on the Wheel
+# ==========================
+
+# Hand tracking used as a monitored signal, not as a control. Reaching
+# toward the camera to operate the system would take a hand off the
+# wheel and the eyes off the road, which is the opposite of the point.
+#
+# Runs on frame 2 of each group of six, the last slot the heavy models
+# leave free. Hands are slow on the scale that matters here - the
+# alarm needs HANDS_OFF_TIME of evidence - so sampling a few times a
+# second is ample.
+HAND_DETECTION_INTERVAL = 6
+HAND_CONFIDENCE = 0.5
+
+# How long with no hands in frame before it counts. Long enough to sit
+# out a gear change or a reach for the indicator stalk.
+HANDS_OFF_TIME = 3.0
+
+# Whether an absence of hands means anything at all.
+#
+# This camera is aimed at a face, and on most setups the wheel is below
+# the bottom edge - so "no hands found" is the normal state, not a
+# warning. The monitor therefore has to earn the right to complain: it
+# only judges once it has found hands HANDS_SEEN_SAMPLES times within
+# the last HANDS_SEEN_WINDOW seconds, which is evidence the wheel is in
+# shot. Until then the status is UNKNOWN. The window, rather than a
+# running total, means a camera knocked out of position stops claiming
+# it can see.
+HANDS_SEEN_WINDOW = 60.0
+HANDS_SEEN_SAMPLES = 10
+
 # The strap's edges must lean between these angles from horizontal. A
 # shoulder-to-hip strap seen from the front sits at about 55-65 degrees;
 # the wider range allows for off-centre cameras. Near-vertical edges
@@ -305,6 +338,7 @@ RISK_PENALTIES = {
     "phone": 35,
     "distracted": 30,
     "camera_blocked": 30,
+    "hands_off": 25,
     "driver_absent": 30,
     "drowsy": 30,
     "tired": 15,
@@ -366,6 +400,7 @@ SEVERITY_TIRED = (PERCLOS_TIRED, PERCLOS_DROWSY)
 
 # Gaze off the road, in seconds.
 SEVERITY_DISTRACTED = (DISTRACTION_DURATION, 6.0)
+SEVERITY_HANDS_OFF = (HANDS_OFF_TIME, 10.0)
 
 # Phone held, in seconds.
 SEVERITY_PHONE = (PHONE_MIN_DURATION, 3.0)
@@ -526,7 +561,7 @@ WMO_WEATHER = {
 
 # Which conditions each context multiplier applies to.
 FATIGUE_CONDITIONS = ("microsleep", "drowsy", "tired", "frequent_yawning")
-ATTENTION_CONDITIONS = ("distracted", "phone")
+ATTENTION_CONDITIONS = ("distracted", "phone", "hands_off")
 
 # Conditions whose measurement depends on readable eyes.
 EYE_CONDITIONS = ("microsleep", "drowsy", "tired")

@@ -24,6 +24,7 @@ from app.config import (
     SEVERITY_DROWSY,
     SEVERITY_TIRED,
     SEVERITY_DISTRACTED,
+    SEVERITY_HANDS_OFF,
     SEVERITY_PHONE,
     SEVERITY_YAWNING,
     SEVERITY_ABSENT,
@@ -93,6 +94,9 @@ def severity(condition, state, absent_duration=None):
 
     if condition == "phone":
         return _from(_get(state, "phone", "usage_duration"), SEVERITY_PHONE)
+
+    if condition == "hands_off":
+        return _from(_get(state, "wheel", "missing_for"), SEVERITY_HANDS_OFF)
 
     if condition == "frequent_yawning":
         return _from(_get(state, "yawn", "recent_yawns"), SEVERITY_YAWNING)

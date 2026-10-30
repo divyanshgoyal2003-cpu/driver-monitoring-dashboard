@@ -47,6 +47,7 @@ class DriverSafetyIndex:
         ("microsleep", "MICROSLEEP - WAKE UP", "critical"),
         ("phone", "PHONE IN USE", "high"),
         ("distracted", "EYES OFF ROAD", "high"),
+        ("hands_off", "HANDS OFF WHEEL", "high"),
         ("camera_blocked", "CAMERA BLOCKED", "high"),
         ("driver_absent", "DRIVER NOT VISIBLE", "high"),
         ("drowsy", "DROWSINESS DETECTED", "high"),
@@ -258,6 +259,14 @@ class DriverSafetyIndex:
 
         if phone and phone["in_use"]:
             active.add("phone")
+
+        # UNKNOWN means the camera cannot see the wheel, which is not
+        # evidence of anything. Only a monitor that has proved it can
+        # see hands gets to report their absence.
+        wheel = state.get("wheel")
+
+        if wheel and wheel["hands_off"]:
+            active.add("hands_off")
 
         seatbelt = state.get("seatbelt")
 

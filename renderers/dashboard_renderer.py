@@ -216,6 +216,7 @@ class DashboardRenderer:
         rows.append(None)
         rows.extend(self._head_pose_rows(state["head_pose"]))
         rows.extend(self._attention_rows(state["distraction"]))
+        rows.extend(self._wheel_rows(state.get("wheel")))
         rows.append(None)
         rows.extend(self._phone_rows(state["phone"]))
         rows.extend(self._emotion_rows(state["emotion"]))
@@ -451,6 +452,37 @@ class DashboardRenderer:
             return [("ATTENTION", f"OFF ROAD {seconds:.1f}s", WARN, detail)]
 
         return [("ATTENTION", "ON ROAD", GOOD, detail)]
+
+    @staticmethod
+    def _wheel_rows(wheel):
+        """
+        UNKNOWN is shown rather than hidden. On most setups the wheel
+        sits below the camera's view, and a driver should be able to
+        see that this is one of them instead of assuming the monitor
+        is watching something it cannot see.
+        """
+
+        if not wheel:
+            return [("HANDS", MISSING, MUTED, "")]
+
+        status = wheel["status"]
+
+        if status == "UNKNOWN":
+            return [("HANDS", MISSING, MUTED, "wheel not in view")]
+
+        value, color = {
+            "BOTH": ("ON WHEEL", GOOD),
+            "ONE": ("ONE HAND", TEXT),
+            "NONE": ("OFF WHEEL", BAD),
+        }[status]
+
+        detail = (
+            f"{wheel['missing_for']:.0f}s off"
+            if status == "NONE"
+            else f"{wheel['count']} seen"
+        )
+
+        return [("HANDS", value, color, detail)]
 
     def _phone_rows(self, phone):
 

@@ -9,6 +9,7 @@ from app.config import (
     PHONE_DETECTION_INTERVAL,
     EMOTION_INTERVAL,
     SEATBELT_INTERVAL,
+    HAND_DETECTION_INTERVAL,
     DYNAMIC_WEIGHTS,
     LOW_LIGHT_ENHANCE
 )
@@ -16,6 +17,7 @@ from models.detectors.yolo_face_detector import YOLOFaceDetector
 from models.detectors.yolo_object_detector import YOLOObjectDetector
 from models.detectors.seatbelt_detector import SeatbeltDetector
 from models.landmarks.mediapipe_face_landmarker import MediaPipeFaceLandmarker
+from models.landmarks.mediapipe_hand_landmarker import MediaPipeHandLandmarker
 from models.classifiers.emotion_classifier import EmotionClassifier
 from analytics.blink_detector import BlinkDetector
 from analytics.yawn_detector import YawnDetector
@@ -27,6 +29,7 @@ from analytics.phone_usage_detector import PhoneUsageDetector
 from analytics.emotion_analyzer import EmotionAnalyzer
 from analytics.seatbelt_monitor import SeatbeltMonitor
 from analytics.camera_monitor import CameraMonitor
+from analytics.wheel_monitor import WheelMonitor
 from risk_engine.scoring import DriverSafetyIndex
 from risk_engine.context import ContextProvider
 from utils.low_light import LowLightEnhancer
@@ -51,6 +54,7 @@ class VideoProcessor:
 
         self.face_detector = YOLOFaceDetector()
         self.landmarker = MediaPipeFaceLandmarker(FACE_LANDMARK_MODEL)
+        self.hand_landmarker = MediaPipeHandLandmarker()
         self.phone_detector = YOLOObjectDetector()
         self.emotion_classifier = EmotionClassifier()
         self.seatbelt_detector = SeatbeltDetector()
@@ -64,6 +68,7 @@ class VideoProcessor:
         self.emotion_analyzer = EmotionAnalyzer(EmotionClassifier.LABELS)
         self.seatbelt_monitor = SeatbeltMonitor()
         self.camera_monitor = CameraMonitor()
+        self.wheel_monitor = WheelMonitor()
         self.safety_index = DriverSafetyIndex(dynamic=dynamic_weights)
         self.landmark_renderer = LandmarkRenderer()
         self.overlay_renderer = OverlayRenderer()
@@ -214,6 +219,15 @@ class VideoProcessor:
             timestamp
         )
 
+        # Frame 2 of each group of six: the last slot the phone,
+        # emotion and seatbelt models leave free.
+        hand_observation = None
+
+        if self.frame_index % HAND_DETECTION_INTERVAL == 2:
+            hand_observation = self.hand_landmarker.detect(frame, timestamp)
+
+        wheel_data = self.wheel_monitor.update(hand_observation, timestamp)
+
         self.frame_index += 1
 
         context = self.context_provider.update(timestamp, brightness)
@@ -238,7 +252,8 @@ class VideoProcessor:
             "distraction": distraction_data,
             "phone": phone_data,
             "emotion": emotion_data,
-            "seatbelt": seatbelt_data
+            "seatbelt": seatbelt_data,
+            "wheel": wheel_data
         }
 
         self.state["risk"] = self.safety_index.update(
@@ -267,6 +282,7 @@ class VideoProcessor:
 
     def close(self):
         self.landmarker.close()
+        self.hand_landmarker.close()
 
     def _luminance(self, frame):
         """

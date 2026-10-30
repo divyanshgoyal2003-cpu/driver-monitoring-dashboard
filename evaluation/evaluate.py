@@ -53,6 +53,7 @@ EPISODE_FLAGS = {
         (s.get("seatbelt") or {}).get("status") == "OFF"
     ),
     "camera_blocked": lambda s: bool((s.get("camera") or {}).get("blocked")),
+    "hands_off": lambda s: bool((s.get("wheel") or {}).get("hands_off")),
 }
 
 # state -> the running count whose increments mark a point event.

@@ -15,6 +15,7 @@ A single camera feed is analysed by several models at once. Their outputs are co
 | Head Pose Estimation | `solvePnP` on six landmarks gives yaw, pitch and roll. The neutral pose is calibrated over the first 3 s. Gaze off the road for 2 s counts as a distraction. |
 | Phone Detection | COCO-trained YOLOv8n, "cell phone" class. Counts as in use once seen for 0.5 s. |
 | Seatbelt Detection | Classical CV baseline: two parallel diagonal strap edges crossing the chest's centre line (Canny + Hough). See [limitations](#known-limitations). |
+| Hands on the Wheel | MediaPipe hand landmarks, 21 points per hand. Both hands gone for 3 s raises HANDS OFF WHEEL — but only on a camera that has proved it can see hands at all, see [hands on the wheel](#hands-on-the-wheel). |
 | Emotion Recognition | FER+ (ONNX) on the driver's face, 8 emotions, smoothed over time. Angry, sad, fearful and disgusted are flagged. |
 | Weather Context | The current conditions, fetched from Open-Meteo for configured coordinates, raise what a lapse costs. The driver overrules it with **W**, and the source of every reading is logged — see [where the weather comes from](#where-the-weather-comes-from). |
 | Camera Obstruction | A lens that is covered goes dark *and* flat. Both held for 2 s raises CAMERA BLOCKED instead of DRIVER NOT VISIBLE — see [seeing in the dark](#seeing-in-the-dark). |
@@ -30,11 +31,14 @@ flowchart LR
     CAM[Camera / video file] --> VP[VideoProcessor]
     VP --> YOLO[YOLO face + ByteTrack]
     VP --> MP[MediaPipe face landmarks]
+    VP --> HAND[MediaPipe hand landmarks]
     VP --> OBJ[YOLO phone]
     VP --> FER[FER+ emotion]
     VP --> SB[Seatbelt edges]
     MP --> AN[Blink / PERCLOS / yawn /<br/>head pose / gaze / distraction]
     AN --> DSI[Driver Safety Index]
+    HAND --> WM[Hands on wheel]
+    WM --> DSI
     OBJ --> DSI
     FER --> DSI
     SB --> DSI
@@ -136,6 +140,42 @@ Two separate problems live at the bottom of the brightness scale, and the system
 
 Enhancement deliberately does **not** change the brightness the risk engine reads. Making an image easier to look at does not make the measurement more trustworthy, so the confidence layer keeps seeing the real light level and keeps discounting eye measurements accordingly. `--no-enhance` turns it off; running the same recording through the harness twice, with and without, is how to find out what it is worth on your camera.
 
+## Hands on the wheel
+
+MediaPipe's hand landmarker runs alongside the face landmarker, and both
+hands gone for 3 s raises HANDS OFF WHEEL. One hand is reported but never
+alarms: changing gear and indicating are one-handed and legal, and a
+monitor that complained about them would be switched off within a minute.
+
+**The hard part is not detecting hands, it is earning the right to
+complain about their absence.** This camera is aimed at a face. On a
+laptop on the dashboard, or any mount framed tightly on the driver's
+head, the wheel is simply below the bottom edge — and then "no hands
+found" is the normal state for the whole drive, not a lapse. A monitor
+that read it as hands off the wheel would cry wolf from the first second
+to the last, which is worse than saying nothing at all.
+
+So the monitor has to see hands before their absence means anything. It
+must find hands on **10 separate occasions within the last 60 seconds**;
+until then the status is UNKNOWN, the panel reads `HANDS  --  wheel not
+in view`, and no alert can fire. The sightings expire, so a camera
+knocked out of position falls back to UNKNOWN within a minute rather
+than reporting hands it can no longer see as gone. This mirrors what the
+seatbelt detector already does when too little chest is in view: say
+UNKNOWN rather than guess.
+
+The consequence worth stating plainly is that **on a face-framed camera
+this feature stays silent, by design.** It is not broken when the HANDS
+row reads `--`; it is refusing to make a claim its view cannot support.
+Point the camera so the wheel's top arc is in shot and it starts
+judging. `HANDS_SEEN_SAMPLES` and `HANDS_SEEN_WINDOW` in `app/config.py`
+set how much evidence it wants.
+
+`hands_off` costs 25 points, scaled by how long the hands have been
+gone: 3 s is the floor and 10 s is the full penalty. It is an attention
+condition, so the context layer applies — hands off the wheel on ice
+costs more than hands off the wheel on a clear road.
+
 ## Setup
 
 Tested on Windows 11 with Python 3.12.
@@ -147,7 +187,7 @@ pip install -r requirements.txt
 python download_models.py
 ```
 
-`download_models.py` fetches the four model files into `trained_models/`, which is gitignored. It skips files that are already present.
+`download_models.py` fetches the five model files into `trained_models/`, which is gitignored. It skips files that are already present.
 
 ## Running
 
@@ -226,7 +266,7 @@ start,end,label
 40.2,48.0,phone
 ```
 
-Valid labels are `blink`, `yawn`, `microsleep`, `distracted`, `phone`, `no_seatbelt` and `camera_blocked`. The report gives precision, recall and F1 for each: blinks and yawns are paired with their labels inside a ±0.5 s tolerance, while episodes are scored on how much of the time the two agree.
+Valid labels are `blink`, `yawn`, `microsleep`, `distracted`, `phone`, `no_seatbelt`, `camera_blocked` and `hands_off`. The report gives precision, recall and F1 for each: blinks and yawns are paired with their labels inside a ±0.5 s tolerance, while episodes are scored on how much of the time the two agree.
 
 The same pass also runs **both** scoring engines over the identical frames and compares them, so neither can be accused of having had the easier video. Leave `--labels` off to get just that comparison and a summary of what was detected.
 
@@ -238,7 +278,7 @@ The same pass also runs **both** scoring engines over the identical frames and c
 python -m unittest discover -s tests -t .
 ```
 
-There are 335 tests. Each analyser is tested on synthetic landmarks with known geometry, including head pose sign conventions, PERCLOS windows and microsleep episodes. Seatbelt tests use synthetic straps painted onto real photos. The safety index, the weighting layers, the camera-obstruction and low-light modules, the forecast client (driven with canned responses, never the network), the alert patterns, the database and the dashboard (run headless with Streamlit's `AppTest`) are covered too. An end-to-end test runs the real models on a sample photo that ships with ultralytics.
+There are 356 tests. Each analyser is tested on synthetic landmarks with known geometry, including head pose sign conventions, PERCLOS windows and microsleep episodes. Seatbelt tests use synthetic straps painted onto real photos. The safety index, the weighting layers, the camera-obstruction, hands-on-wheel and low-light modules, the forecast client (driven with canned responses, never the network), the alert patterns, the database and the dashboard (run headless with Streamlit's `AppTest`) are covered too. An end-to-end test runs the real models on a sample photo that ships with ultralytics.
 
 ## Demo guide
 
@@ -257,6 +297,7 @@ There are 335 tests. Each analyser is tested on synthetic landmarks with known g
 | Smile, or frown angrily | EMOTION changes |
 | Put a diagonal strap (a seatbelt, or a bag strap) across your chest | SEATBELT: ON |
 | Step out of view for 2 s | DRIVER NOT VISIBLE |
+| Hold both hands up in frame, then drop them for 3 s | HANDS: BOTH, then HANDS OFF WHEEL. If the row reads `--`, the camera has not seen hands often enough yet — hold them up a little longer |
 | Cover the lens with a finger for 2 s | CAMERA: BLOCKED and the CAMERA BLOCKED alert — *not* DRIVER NOT VISIBLE |
 | Turn the room lights down | CAMERA: LOW LIGHT with the lift percentage, and the eye penalties quietly discounted |
 
@@ -271,6 +312,7 @@ Watch the **SAFETY INDEX** at the top of the panel react to each of these. After
 |---|---|---|
 | `face/face_yolov8n.pt` | Face detection | Hugging Face `Bingsu/adetailer` |
 | `face/face_landmarker.task` | 478 face landmarks, including irises | Google MediaPipe |
+| `hands/hand_landmarker.task` | 21 landmarks per hand | Google MediaPipe |
 | `objects/yolov8n.pt` | Phone detection (COCO) | Ultralytics releases |
 | `emotion/emotion-ferplus-8.onnx` | Facial expression (FER+) | ONNX Model Zoo |
 
@@ -279,10 +321,11 @@ Watch the **SAFETY INDEX** at the top of the panel react to each of these. After
 These are things to refine after the mid-implementation review:
 
 - **The seatbelt detector is a heuristic baseline.** It finds strap-shaped diagonal bands, so a lanyard or a bag strap also reads as a belt. With less than about one face-height of chest in view, it reports UNKNOWN instead of guessing. A YOLO model trained on a labelled in-cabin dataset is the planned replacement.
+- **Hands-off detection depends entirely on the camera's framing.** It only judges after seeing hands 10 times in a minute, so a camera aimed at the face alone never reports anything and the HANDS row stays `--`. That is the intended failure mode — silence beats a false alarm that runs for the whole drive — but it does mean the feature is off by default on the most common laptop setup, and nothing on screen distinguishes "the wheel is out of shot" from "the detector is broken" except the row's own `wheel not in view` note.
 - **Left and right assume an unmirrored camera image**, which is what OpenCV delivers on Windows.
 - **MediaPipe needs a mostly frontal face.** Near-profile faces are detected by YOLO but not analysed. Small or distant faces are retried on a crop around the YOLO box.
 - **Looking down lowers the eyelids**, which can raise PERCLOS slightly.
-- **Everything runs on the CPU.** It measures about 18 FPS on the development laptop (Core i5-13420H). Phone, emotion and seatbelt detection take turns across a group of six frames, so half the frames run the landmarks alone. Spacing them 3 apart, as they were, put one heavy model on *every* frame and no frame was ever cheap; widening to 6 measured 12.6 → 18.4 FPS. FER+ is the most expensive model in the pipeline by some way (~67 ms against ~16 ms for the landmarks) while carrying the smallest penalty. In a dim cabin the low-light enhancement adds a measured ~10 ms to every frame, so expect roughly 15 FPS in the dark against 18 in good light; `--no-enhance` buys the frames back. Reading the brightness and variance costs ~0.3 ms and runs always.
+- **Everything runs on the CPU.** It measures about 18 FPS on the development laptop (Core i5-13420H). Phone, hand, emotion and seatbelt detection take turns across a group of six frames, so a third of the frames run the face landmarks alone. Spacing them 3 apart, as they were, put one heavy model on *every* frame and no frame was ever cheap; widening to 6 measured 12.6 → 18.4 FPS. FER+ is the most expensive model in the pipeline by some way (~67 ms against ~16 ms for the landmarks) while carrying the smallest penalty. In a dim cabin the low-light enhancement adds a measured ~10 ms to every frame, so expect roughly 15 FPS in the dark against 18 in good light; `--no-enhance` buys the frames back. The hand landmarker measures ~16 ms per call, which its one-frame-in-six slot amortises to ~2.7 ms per frame (~14.2 → ~13.7 FPS in a measured run). Reading the brightness and variance costs ~0.3 ms and runs always.
 - **Blink recall is limited by the frame rate.** A blink lasts 100–200 ms, so at 18 FPS it spans two or three frames and a short one can still be missed. Run `evaluation/evaluate.py` against a hand-labelled video to measure how many.
 - **Low-light enhancement is not night vision and cannot become it.** Infrared needs an illuminator and a sensor without an IR-cut filter; a laptop webcam has neither, and no amount of processing recovers photons that were never captured. CLAHE redistributes the contrast that is already in the frame, which can bring a face in a *dim* room back within MediaPipe's reach. It does nothing for a cabin that is genuinely dark. A production in-cabin system uses an IR camera, and the confidence layer would then simply see a well-lit frame and stop discounting.
 - **The obstruction thresholds are tuned to one laptop camera.** Mean ≤ 15 and standard deviation ≤ 8 separate a covered lens from a dark cabin on the development webcam. A sensor with a different noise floor — most obviously one that denoises aggressively in low light — may need `CAMERA_BLOCKED_VARIANCE` raised in `app/config.py`.
@@ -295,10 +338,12 @@ These are things to refine after the mid-implementation review:
 
 ```
 app/            entry point, camera, configuration, per-frame pipeline
-models/         model wrappers: YOLO face & objects, MediaPipe, FER+, seatbelt
+models/         model wrappers: YOLO face & objects, MediaPipe face &
+                hands, FER+, seatbelt
 analytics/      blink, drowsiness, yawn, head pose, gaze, distraction,
                 phone usage, emotion smoothing, seatbelt pooling,
-                per-driver EAR calibration, camera obstruction
+                per-driver EAR calibration, camera obstruction,
+                hands on the wheel
 risk_engine/    Driver Safety Index, severity/confidence weights,
                 driving context
 renderers/      live window: overlays on the frame and the side panel

@@ -27,6 +27,11 @@ MODELS = [
         "/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
     ),
     (
+        "trained_models/hands/hand_landmarker.task",
+        "https://storage.googleapis.com/mediapipe-models"
+        "/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task"
+    ),
+    (
         "trained_models/objects/yolov8n.pt",
         "https://github.com/ultralytics/assets/releases/download"
         "/v8.4.0/yolov8n.pt"
