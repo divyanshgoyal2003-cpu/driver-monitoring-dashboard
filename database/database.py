@@ -27,7 +27,9 @@ CREATE TABLE IF NOT EXISTS sessions (
     yawns INTEGER,
     microsleeps INTEGER,
     distractions INTEGER,
-    phone_uses INTEGER
+    phone_uses INTEGER,
+    hands_off_episodes INTEGER,
+    camera_blocks INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS metrics (
@@ -60,7 +62,9 @@ CREATE TABLE IF NOT EXISTS metrics (
     context_attention REAL,
     weights_mode TEXT,
     weather TEXT,
-    weather_source TEXT
+    weather_source TEXT,
+    hands_status TEXT,
+    camera_blocked INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS events (
@@ -83,7 +87,8 @@ METRIC_COLUMNS = (
     "head_direction", "gaze_direction", "eyes_on_road", "phone_in_use",
     "seatbelt", "emotion", "emotion_confidence", "safety_score",
     "risk_level", "brightness", "ear_threshold", "context_fatigue",
-    "context_attention", "weights_mode", "weather", "weather_source"
+    "context_attention", "weights_mode", "weather", "weather_source",
+    "hands_status", "camera_blocked"
 )
 
 # Columns added after the first release. CREATE TABLE IF NOT EXISTS
@@ -98,12 +103,19 @@ ADDED_COLUMNS = {
         ("weights_mode", "TEXT"),
         ("weather", "TEXT"),
         ("weather_source", "TEXT"),
+        ("hands_status", "TEXT"),
+        ("camera_blocked", "INTEGER"),
+    ),
+    "sessions": (
+        ("hands_off_episodes", "INTEGER"),
+        ("camera_blocks", "INTEGER"),
     ),
 }
 
 SUMMARY_COLUMNS = (
     "ended_at", "duration", "average_score", "minimum_score", "blinks",
-    "yawns", "microsleeps", "distractions", "phone_uses"
+    "yawns", "microsleeps", "distractions", "phone_uses",
+    "hands_off_episodes", "camera_blocks"
 )
 
 

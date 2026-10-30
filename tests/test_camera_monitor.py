@@ -198,5 +198,45 @@ class BlockedCameraScoringTest(unittest.TestCase):
         self.assertNotIn("CAMERA BLOCKED", alerts(risk))
 
 
+class BlockedSpellCountTest(unittest.TestCase):
+    """
+    One covered-lens spell counts once, so the session summary can say
+    how many times the camera was defeated rather than for how many
+    frames.
+    """
+
+    def test_it_starts_at_zero(self):
+        self.assertEqual(monitor().blocked_count, 0)
+
+    def test_a_long_spell_counts_once(self):
+        result = feed(monitor(), 2.0, 1.0, 0.0, 60.0)
+
+        self.assertTrue(result["blocked"])
+        self.assertEqual(result["blocked_count"], 1)
+
+    def test_two_spells_count_twice(self):
+        camera = monitor()
+
+        feed(camera, 2.0, 1.0, 0.0, 10.0)
+        feed(camera, 120.0, 45.0, 10.5, 15.0)
+        result = feed(camera, 2.0, 1.0, 15.5, 25.0)
+
+        self.assertEqual(result["blocked_count"], 2)
+
+    def test_a_brief_dip_counts_nothing(self):
+        """Shorter than the two seconds the monitor insists on."""
+
+        result = feed(monitor(), 2.0, 1.0, 0.0, 1.0)
+
+        self.assertEqual(result["blocked_count"], 0)
+
+    def test_a_dark_cabin_counts_nothing(self):
+        """Dark but not flat: shapes and sensor noise are still there."""
+
+        result = feed(monitor(), 12.0, 25.0, 0.0, 60.0)
+
+        self.assertEqual(result["blocked_count"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

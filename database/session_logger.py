@@ -58,6 +58,8 @@ class SessionLogger:
             "microsleeps": 0,
             "distractions": 0,
             "phone_uses": 0,
+            "hands_off_episodes": 0,
+            "camera_blocks": 0,
         }
 
     def log(self, state):
@@ -187,6 +189,16 @@ class SessionLogger:
             "weather_source": (
                 context.weather_source if context else None
             ),
+            # UNKNOWN is a reading, not a gap: it says the wheel
+            # was out of shot, which is why no hands-off episode
+            # was ever raised. Logging it as NULL would leave a
+            # reviewer unable to tell that from a camera that
+            # watched the wheel all drive and saw nothing wrong.
+            "hands_status": _value(state, "wheel", "status"),
+            # None (not False) for a session recorded before the
+            # camera monitor existed, so an old log cannot claim
+            # the lens was clear when nobody was watching it.
+            "camera_blocked": _value(state, "camera", "blocked"),
         }
 
     def _update_counts(self, state):
@@ -197,6 +209,8 @@ class SessionLogger:
             "microsleeps": ("drowsiness", "microsleep_count"),
             "distractions": ("distraction", "distraction_count"),
             "phone_uses": ("phone", "usage_count"),
+            "hands_off_episodes": ("wheel", "hands_off_count"),
+            "camera_blocks": ("camera", "blocked_count"),
         }
 
         for name, (section, key) in sources.items():

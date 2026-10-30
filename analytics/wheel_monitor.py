@@ -47,6 +47,12 @@ class WheelMonitor:
         self.status = "UNKNOWN"
         self.count = 0
 
+        # Episodes, not frames: one spell of hands off the wheel
+        # counts once however long it lasts, so the session
+        # summary reads the same way as blinks and yawns.
+        self.hands_off_count = 0
+        self.hands_off_active = False
+
     @property
     def can_see(self):
         """
@@ -100,10 +106,18 @@ class WheelMonitor:
             # call it.
             self.status = "ONE" if self.status == "ONE" else "BOTH"
 
+        hands_off = self.status == "NONE"
+
+        if hands_off and not self.hands_off_active:
+            self.hands_off_count += 1
+
+        self.hands_off_active = hands_off
+
         return {
             "status": self.status,
             "count": self.count,
-            "hands_off": self.status == "NONE",
+            "hands_off": hands_off,
+            "hands_off_count": self.hands_off_count,
             "missing_for": missing_for,
             "can_see": self.can_see
         }

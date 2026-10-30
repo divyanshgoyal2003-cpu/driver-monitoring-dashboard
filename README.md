@@ -171,6 +171,12 @@ Point the camera so the wheel's top arc is in shot and it starts
 judging. `HANDS_SEEN_SAMPLES` and `HANDS_SEEN_WINDOW` in `app/config.py`
 set how much evidence it wants.
 
+The status is logged every snapshot and summarised per session, so
+a drive can be reviewed for it afterwards — including the UNKNOWN
+case, which is recorded as a reading rather than left blank. A
+reviewer who cannot tell "the wheel was out of shot" from "the
+driver never let go" has been told nothing.
+
 `hands_off` costs 25 points, scaled by how long the hands have been
 gone: 3 s is the floor and 10 s is the full penalty. It is an attention
 condition, so the context layer applies — hands off the wheel on ice
@@ -246,6 +252,7 @@ The dashboard has these sections:
 - Head pose
 - Emotion share
 - Risk weighting: the context multipliers over time, the cabin brightness, and which weather was in force **and on whose authority** — a session scored under declared snow reads `Weather: snow (driver)`, a fetched one `Weather: clear (forecast)`
+- Camera and wheel: the share of the session each hands-on-wheel status held, how many hands-off episodes there were, and how much of the drive the lens was covered for. An unseen wheel says so in words, because a bare zero here would read as a flawless drive
 - Event log
 - Raw measurements table, with CSV download
 
@@ -278,7 +285,7 @@ The same pass also runs **both** scoring engines over the identical frames and c
 python -m unittest discover -s tests -t .
 ```
 
-There are 356 tests. Each analyser is tested on synthetic landmarks with known geometry, including head pose sign conventions, PERCLOS windows and microsleep episodes. Seatbelt tests use synthetic straps painted onto real photos. The safety index, the weighting layers, the camera-obstruction, hands-on-wheel and low-light modules, the forecast client (driven with canned responses, never the network), the alert patterns, the database and the dashboard (run headless with Streamlit's `AppTest`) are covered too. An end-to-end test runs the real models on a sample photo that ships with ultralytics.
+There are 373 tests. Each analyser is tested on synthetic landmarks with known geometry, including head pose sign conventions, PERCLOS windows and microsleep episodes. Seatbelt tests use synthetic straps painted onto real photos. The safety index, the weighting layers, the camera-obstruction, hands-on-wheel and low-light modules, the forecast client (driven with canned responses, never the network), the alert patterns, the database and the dashboard (run headless with Streamlit's `AppTest`) are covered too. An end-to-end test runs the real models on a sample photo that ships with ultralytics.
 
 ## Demo guide
 

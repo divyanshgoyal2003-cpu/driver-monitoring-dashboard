@@ -11,7 +11,8 @@ from database.session_logger import SessionLogger
 
 
 def make_state(timestamp, score=100.0, events=(), blinks=0, face=True,
-               context=None, dynamic=False, brightness=None):
+               context=None, dynamic=False, brightness=None,
+               wheel=None, camera=None):
 
     state = {
         "timestamp": timestamp,
@@ -26,6 +27,10 @@ def make_state(timestamp, score=100.0, events=(), blinks=0, face=True,
         "distraction": None,
         "phone": {"in_use": False, "usage_count": 0},
         "seatbelt": {"status": "UNKNOWN"},
+        # Left out by default, so the tests for sessions
+        # recorded before these monitors existed keep working.
+        "wheel": wheel,
+        "camera": camera,
         "emotion": None,
         "risk": {
             "score": score,
@@ -82,6 +87,13 @@ class DatabaseTest(unittest.TestCase):
         logger.close()
 
         return logger.session_id
+
+    def summary(self, session_id):
+        """The sessions row for one session."""
+
+        sessions = self.database.sessions()
+
+        return sessions[sessions["id"] == session_id].iloc[0]
 
     def test_creates_the_folder(self):
         self.assertTrue(os.path.exists(self.path))
@@ -158,11 +170,113 @@ class DatabaseTest(unittest.TestCase):
 
         self.assertIn("weights_mode", columns)
         self.assertIn("context_fatigue", columns)
+        self.assertIn("hands_status", columns)
+        self.assertIn("camera_blocked", columns)
+
+        # The summary columns are added to sessions in the same
+        # pass; before this they were only ever in CREATE TABLE.
+        session_columns = {
+            row[1] for row in
+            database.connection.execute("PRAGMA table_info(sessions)")
+        }
+
+        self.assertIn("hands_off_episodes", session_columns)
+        self.assertIn("camera_blocks", session_columns)
 
         # The rows that were already there survive.
         metrics = database.metrics(1)
         self.assertEqual(len(metrics), 1)
         self.assertAlmostEqual(metrics["safety_score"].iloc[0], 88.0)
+
+    def test_the_wheel_and_the_lens_are_logged(self):
+        """
+        The live panel showed both from the day they were written; the
+        session log did not, so a drive could not be reviewed for
+        either afterwards.
+        """
+
+        logger = SessionLogger(self.database, "0")
+
+        t = 100.0
+
+        for i in range(90):
+            hands_off = 30 <= i < 60
+
+            logger.log(make_state(
+                t,
+                wheel={
+                    "status": "NONE" if hands_off else "BOTH",
+                    "count": 0 if hands_off else 2,
+                    "hands_off": hands_off,
+                    "hands_off_count": 1 if i >= 30 else 0,
+                    "missing_for": 5.0 if hands_off else 0.0,
+                    "can_see": True,
+                },
+                camera={
+                    "blocked": i >= 60,
+                    "blocked_count": 1 if i >= 60 else 0,
+                    "brightness": 2.0 if i >= 60 else 90.0,
+                    "variance": 1.0 if i >= 60 else 40.0,
+                    "blocked_duration": 3.0 if i >= 60 else 0.0,
+                },
+            ))
+            t += 1 / 30.0
+
+        logger.close()
+
+        metrics = self.database.metrics(logger.session_id)
+
+        self.assertEqual(list(metrics["hands_status"]),
+                         ["BOTH", "NONE", "BOTH"])
+        self.assertEqual(
+            [bool(v) for v in metrics["camera_blocked"]],
+            [False, False, True]
+        )
+
+        session = self.summary(logger.session_id)
+
+        self.assertEqual(session["hands_off_episodes"], 1)
+        self.assertEqual(session["camera_blocks"], 1)
+
+    def test_an_unseen_wheel_is_logged_as_unknown_not_as_nothing(self):
+        """
+        UNKNOWN is a reading. Logging it as NULL would leave a
+        reviewer unable to tell a wheel that was out of shot from a
+        wheel that was watched all drive and never let go of.
+        """
+
+        logger = SessionLogger(self.database, "0")
+
+        t = 100.0
+
+        for _ in range(60):
+            logger.log(make_state(t, wheel={
+                "status": "UNKNOWN", "count": 0, "hands_off": False,
+                "hands_off_count": 0, "missing_for": 0.0,
+                "can_see": False,
+            }))
+            t += 1 / 30.0
+
+        logger.close()
+
+        metrics = self.database.metrics(logger.session_id)
+
+        self.assertTrue((metrics["hands_status"] == "UNKNOWN").all())
+        self.assertEqual(
+            self.summary(logger.session_id)["hands_off_episodes"], 0
+        )
+
+    def test_a_session_without_either_monitor_logs_nulls(self):
+        """
+        Not zeros. A session recorded before these existed must not
+        claim the lens was clear when nobody was watching it.
+        """
+
+        session_id = self.run_session(seconds=2.0)
+        metrics = self.database.metrics(session_id)
+
+        self.assertTrue(metrics["hands_status"].isna().all())
+        self.assertTrue(metrics["camera_blocked"].isna().all())
 
     def test_metrics_are_sampled_once_per_second(self):
         session_id = self.run_session(seconds=5.0)

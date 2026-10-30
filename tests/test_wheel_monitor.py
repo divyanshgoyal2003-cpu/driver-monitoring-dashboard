@@ -211,5 +211,59 @@ class HandsOffScoringTest(unittest.TestCase):
         self.assertEqual(without, 1.0)
 
 
+class EpisodeCountTest(unittest.TestCase):
+    """
+    One spell of hands off the wheel counts once, however long it
+    lasts, so the session summary reads like blinks and yawns rather
+    than like a frame counter.
+    """
+
+    def ready(self):
+        wheel = monitor()
+        feed(wheel, 2, 0.0, 2.0)
+
+        return wheel
+
+    def test_it_starts_at_zero(self):
+        self.assertEqual(monitor().hands_off_count, 0)
+
+    def test_a_long_episode_counts_once(self):
+        wheel = self.ready()
+
+        result = feed(wheel, 0, 3.0, 40.0)
+
+        self.assertTrue(result["hands_off"])
+        self.assertEqual(result["hands_off_count"], 1)
+
+    def test_two_episodes_count_twice(self):
+        wheel = self.ready()
+
+        feed(wheel, 0, 3.0, 10.0)
+        feed(wheel, 2, 10.5, 12.0)
+        result = feed(wheel, 0, 12.5, 20.0)
+
+        self.assertEqual(result["hands_off_count"], 2)
+
+    def test_hands_leaving_briefly_counts_nothing(self):
+        wheel = self.ready()
+
+        result = feed(wheel, 0, 3.0, 5.0)
+
+        self.assertEqual(result["hands_off_count"], 0)
+
+    def test_a_camera_that_cannot_see_counts_nothing(self):
+        """
+        The whole point of the can_see gate: a wheel out of shot must
+        not fill the session summary with episodes that never
+        happened.
+        """
+
+        wheel = monitor()
+
+        result = feed(wheel, 0, 0.0, 600.0, step=5.0)
+
+        self.assertEqual(result["hands_off_count"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

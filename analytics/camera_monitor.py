@@ -34,6 +34,10 @@ class CameraMonitor:
         self.dark_since = None
         self.blocked = False
 
+        # One spell of a covered lens counts once, however long
+        # it lasts.
+        self.blocked_count = 0
+
     def update(self, brightness, variance, timestamp):
         """
         brightness: mean pixel value of the frame, 0-255
@@ -55,10 +59,16 @@ class CameraMonitor:
             self.dark_since = None
             duration = 0.0
 
-        self.blocked = duration >= self.min_duration
+        blocked = duration >= self.min_duration
+
+        if blocked and not self.blocked:
+            self.blocked_count += 1
+
+        self.blocked = blocked
 
         return {
             "blocked": self.blocked,
+            "blocked_count": self.blocked_count,
             "brightness": brightness,
             "variance": variance,
             "blocked_duration": duration if self.blocked else 0.0

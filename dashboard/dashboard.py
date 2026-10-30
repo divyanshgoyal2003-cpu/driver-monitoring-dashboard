@@ -476,6 +476,85 @@ def show_weather(metrics):
     st.caption(f"Weather: {described}.")
 
 
+HANDS_ORDER = ("BOTH", "ONE", "NONE", "UNKNOWN")
+
+
+def show_camera_and_wheel(session, metrics, charts):
+    """
+    Two detectors whose most common honest answer is "I could not see".
+
+    Both deserve a section rather than a KPI tile, because a zero from
+    either is ambiguous on its own. No hands-off episodes can mean the
+    driver never let go, or that the wheel was never in shot; no
+    blocked spells can mean a clear lens, or a session recorded before
+    the monitor existed. The count alone cannot tell those apart, so
+    the share of the session each status held is shown beside it.
+    """
+
+    hands = has_data(metrics, "hands_status")
+    camera = has_data(metrics, "camera_blocked")
+
+    if not hands and not camera:
+        return
+
+    st.subheader("Camera and wheel")
+
+    left, right = st.columns([2, 1])
+
+    with left:
+        if hands:
+            seen = metrics["hands_status"].dropna()
+            unknown = (seen == "UNKNOWN").mean()
+
+            st.altair_chart(
+                charts.bars(
+                    share_by(metrics, "hands_status", HANDS_ORDER),
+                    "hands_status", "percent", "Share of session (%)",
+                    ".0f", order=HANDS_ORDER, domain=[0, 100],
+                ),
+                theme=None,
+                width="stretch",
+            )
+
+            episodes = int(session["hands_off_episodes"] or 0)
+
+            if unknown == 1.0:
+                st.caption(
+                    "The wheel was never in the camera's view, so "
+                    "hands-off was not judged at all this session. "
+                    "That is the detector declining to guess, not a "
+                    "clean drive."
+                )
+            else:
+                st.caption(
+                    f"{episodes} hands-off "
+                    f"{'episode' if episodes == 1 else 'episodes'}"
+                    + (
+                        f", and the wheel was out of view for "
+                        f"{unknown * 100:.0f}% of the session."
+                        if unknown > 0 else "."
+                    )
+                )
+        else:
+            st.caption("No hands-on-wheel data in this session.")
+
+    with right:
+        if camera:
+            blocked = metrics["camera_blocked"].dropna().astype(bool)
+            spells = int(session["camera_blocks"] or 0)
+
+            st.metric("Lens blocked", f"{blocked.mean() * 100:.0f}%",
+                      help="Share of the logged session with the lens "
+                           "covered")
+            st.caption(
+                f"{spells} {'spell' if spells == 1 else 'spells'}."
+                if spells
+                else "The lens was never covered."
+            )
+        else:
+            st.caption("No camera obstruction data in this session.")
+
+
 def show_weighting(metrics, charts):
     """
     What the risk weights were doing: how much the situation amplified
@@ -675,6 +754,8 @@ def main():
             )
         else:
             st.caption("No emotion data (face not visible).")
+
+    show_camera_and_wheel(session, metrics, charts)
 
     show_weighting(metrics, charts)
 
