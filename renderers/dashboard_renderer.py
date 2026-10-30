@@ -25,6 +25,15 @@ MISSING = "--"
 # At most this many alerts are listed at the bottom of the panel.
 MAX_ALERTS = 3
 
+# A weather multiplier at or above this reads as red rather than amber.
+WEATHER_SEVERE = 1.30
+
+# The key hints along the bottom of the panel. Every key the live loop
+# in app/main.py handles belongs here: a control the driver cannot
+# discover is a control they do not have. test_dashboard_renderer keeps
+# the two in step.
+KEY_HINTS = "Q quit   L landmarks   C calibrate   S sound   W weather"
+
 
 class DashboardRenderer:
     """
@@ -195,6 +204,8 @@ class DashboardRenderer:
 
         rows = []
 
+        rows.extend(self._camera_rows(state))
+        rows.extend(self._weather_rows(state))
         rows.extend(self._face_rows(state))
         rows.append(None)
         rows.extend(self._eye_rows(state["blink"]))
@@ -211,6 +222,78 @@ class DashboardRenderer:
         rows.extend(self._seatbelt_rows(state["seatbelt"]))
 
         return rows
+
+    @staticmethod
+    def _camera_rows(state):
+        """
+        Only worth a row when the camera itself is the story. A working
+        lens in a lit cabin is the assumption behind every other row, so
+        saying so each frame would be noise.
+        """
+
+        camera = state.get("camera")
+
+        if not camera:
+            return []
+
+        if camera["blocked"]:
+            return [(
+                "CAMERA",
+                "BLOCKED",
+                BAD,
+                f"flat for {camera['blocked_duration']:.0f}s"
+            )]
+
+        strength = state.get("enhancement") or 0.0
+
+        if strength > 0.0:
+            return [(
+                "CAMERA",
+                "LOW LIGHT",
+                WARN,
+                f"lift {strength * 100:.0f}%, "
+                f"light {camera['brightness']:.0f}"
+            )]
+
+        return []
+
+    @staticmethod
+    def _weather_rows(state):
+        """
+        Shown whenever the weather is weighing something, and whenever a
+        forecast is involved even if it says clear.
+
+        The second half is the point of the row. A driver who cannot see
+        that the forecast is stale, or that it has not arrived, has no
+        way of knowing there is anything to overrule - and the value
+        in force says nothing about that on its own, because an honest
+        1.0 and an ignorant one look identical.
+        """
+
+        context = state["risk"].get("context")
+
+        if context is None:
+            return []
+
+        multiplier = context.weather_multiplier()
+        source = context.weather_source
+
+        if multiplier <= 1.0 and source == "default":
+            return []
+
+        if multiplier >= WEATHER_SEVERE:
+            color = BAD
+        elif multiplier > 1.0:
+            color = WARN
+        else:
+            color = GOOD
+
+        return [(
+            "WEATHER",
+            context.conditions.replace("_", " ").upper(),
+            color,
+            source
+        )]
 
     def _face_rows(self, state):
 
@@ -438,13 +521,7 @@ class DashboardRenderer:
 
         self._divider(panel, y - 20)
 
-        put_text(
-            panel,
-            "Q quit   L landmarks   C calibrate   S sound",
-            (LABEL_X, y),
-            0.42,
-            MUTED
-        )
+        put_text(panel, KEY_HINTS, (LABEL_X, y), 0.42, MUTED)
 
     def _divider(self, panel, y):
 

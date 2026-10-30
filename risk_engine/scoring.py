@@ -47,6 +47,7 @@ class DriverSafetyIndex:
         ("microsleep", "MICROSLEEP - WAKE UP", "critical"),
         ("phone", "PHONE IN USE", "high"),
         ("distracted", "EYES OFF ROAD", "high"),
+        ("camera_blocked", "CAMERA BLOCKED", "high"),
         ("driver_absent", "DRIVER NOT VISIBLE", "high"),
         ("drowsy", "DROWSINESS DETECTED", "high"),
         ("tired", "SIGNS OF FATIGUE", "medium"),
@@ -129,8 +130,12 @@ class DriverSafetyIndex:
         self.active = active
         self.level = level
 
+        # The condition's name travels with the alert so a listener can
+        # tell a drowsy driver from a distracted one. They share a
+        # severity but not a remedy: one needs informing, the other
+        # needs rousing.
         alerts = [
-            {"message": message, "severity": severity}
+            {"name": name, "message": message, "severity": severity}
             for name, message, severity in self.CONDITIONS
             if name in active
         ]
@@ -209,6 +214,12 @@ class DriverSafetyIndex:
 
         active = set()
 
+        camera = state.get("camera")
+        blocked = bool(camera and camera["blocked"])
+
+        if blocked:
+            active.add("camera_blocked")
+
         if state.get("face_detected"):
             self.face_lost_since = None
 
@@ -216,7 +227,11 @@ class DriverSafetyIndex:
             if self.face_lost_since is None:
                 self.face_lost_since = timestamp
 
-            if timestamp - self.face_lost_since >= self.absent_time:
+            # A covered lens already explains the missing face. Raising
+            # DRIVER NOT VISIBLE as well would charge one cause twice
+            # and send the driver looking for a problem in the seat.
+            if (timestamp - self.face_lost_since >= self.absent_time
+                    and not blocked):
                 active.add("driver_absent")
 
         drowsiness = state.get("drowsiness")

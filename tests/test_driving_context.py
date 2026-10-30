@@ -2,7 +2,12 @@ import unittest
 from datetime import datetime
 
 from risk_engine.context import DrivingContext, ContextProvider
-from app.config import BRIGHTNESS_DARK, BRIGHTNESS_LIT, TIME_ON_TASK_MAX
+from app.config import (
+    BRIGHTNESS_DARK,
+    BRIGHTNESS_LIT,
+    TIME_ON_TASK_MAX,
+    WEATHER_MULTIPLIERS
+)
 
 
 class DrivingContextTest(unittest.TestCase):
@@ -69,16 +74,238 @@ class DrivingContextTest(unittest.TestCase):
     def test_context_never_discounts(self):
         for hour in range(24):
             for brightness in (None, 0, 50, 255):
-                context = DrivingContext(
-                    hour=hour, elapsed=0, brightness=brightness
-                )
-                self.assertGreaterEqual(context.fatigue_multiplier(), 1.0)
-                self.assertGreaterEqual(context.attention_multiplier(), 1.0)
+                for weather in tuple(WEATHER_MULTIPLIERS) + ("", None, "?"):
+                    context = DrivingContext(
+                        hour=hour,
+                        elapsed=0,
+                        brightness=brightness,
+                        weather=weather
+                    )
+                    self.assertGreaterEqual(
+                        context.fatigue_multiplier(), 1.0
+                    )
+                    self.assertGreaterEqual(
+                        context.attention_multiplier(), 1.0
+                    )
 
     def test_summary_names_what_is_raising_the_weight(self):
         self.assertIsNone(DrivingContext(hour=11, brightness=200).summary())
         self.assertIn("night", DrivingContext(hour=3).summary())
         self.assertIn("dark", DrivingContext(brightness=10).summary())
+
+
+class WeatherTest(unittest.TestCase):
+    """
+    Weather weighs consequence rather than likelihood, so unlike the
+    clock and the cabin light it amplifies *both* families: there is
+    less room to recover from any lapse on a wet road.
+    """
+
+    def test_clear_weather_is_neutral(self):
+        context = DrivingContext(hour=12, brightness=200, weather="clear")
+
+        self.assertEqual(context.weather_multiplier(), 1.0)
+        self.assertEqual(context.fatigue_multiplier(), 1.0)
+        self.assertEqual(context.attention_multiplier(), 1.0)
+
+    def test_rain_weighs_both_fatigue_and_attention(self):
+        clear = DrivingContext(hour=12, brightness=200, weather="clear")
+        rain = DrivingContext(hour=12, brightness=200, weather="rain")
+
+        self.assertGreater(
+            rain.fatigue_multiplier(), clear.fatigue_multiplier()
+        )
+        self.assertGreater(
+            rain.attention_multiplier(), clear.attention_multiplier()
+        )
+
+    def test_worse_conditions_weigh_more(self):
+        """
+        Ordered by how much margin the road and the air leave, not by
+        how unpleasant the drive is.
+        """
+
+        def weight(weather):
+            return DrivingContext(weather=weather).weather_multiplier()
+
+        self.assertEqual(weight("cloudy"), weight("clear"))
+        self.assertGreater(weight("rain"), weight("clear"))
+        self.assertGreater(weight("heavy_rain"), weight("rain"))
+        self.assertGreater(weight("snow"), weight("heavy_rain"))
+        self.assertGreater(weight("ice"), weight("snow"))
+
+    def test_an_unknown_condition_weighs_nothing(self):
+        """
+        A forecast API will one day return words this table has never
+        heard of. Guessing at them would inflate the score silently.
+        """
+
+        self.assertEqual(
+            DrivingContext(weather="volcanic ash").weather_multiplier(), 1.0
+        )
+
+    def test_a_missing_condition_is_treated_as_clear(self):
+        for weather in (None, "", "   "):
+            context = DrivingContext(weather=weather)
+
+            self.assertEqual(context.conditions, "clear")
+            self.assertEqual(context.weather_multiplier(), 1.0)
+
+    def test_case_and_spacing_do_not_matter(self):
+        plain = DrivingContext(weather="heavy_rain").weather_multiplier()
+
+        for spelling in ("Heavy Rain", "HEAVY_RAIN", "  heavy rain  "):
+            self.assertEqual(
+                DrivingContext(weather=spelling).weather_multiplier(),
+                plain
+            )
+
+    def test_weather_compounds_with_the_clock(self):
+        night_clear = DrivingContext(hour=3, weather="clear")
+        night_snow = DrivingContext(hour=3, weather="snow")
+
+        self.assertGreater(
+            night_snow.fatigue_multiplier(),
+            night_clear.fatigue_multiplier()
+        )
+
+    def test_weather_compounds_with_the_cabin_light(self):
+        dark_clear = DrivingContext(brightness=10, weather="clear")
+        dark_rain = DrivingContext(brightness=10, weather="rain")
+
+        self.assertGreater(
+            dark_rain.attention_multiplier(),
+            dark_clear.attention_multiplier()
+        )
+
+    def test_summary_names_the_weather(self):
+        summary = DrivingContext(hour=12, brightness=200,
+                                 weather="snow").summary()
+
+        self.assertEqual(summary, "snow")
+
+    def test_summary_spells_the_weather_readably(self):
+        summary = DrivingContext(weather="heavy_rain").summary()
+
+        self.assertIn("heavy rain", summary)
+
+    def test_summary_leaves_out_weather_that_changes_nothing(self):
+        for weather in ("clear", "cloudy", "volcanic ash"):
+            context = DrivingContext(hour=12, brightness=200,
+                                     weather=weather)
+
+            self.assertIsNone(context.summary())
+
+
+class FakeForecast:
+    """Stands in for a WeatherService; only provenance() is used."""
+
+    def __init__(self, weather, label="forecast"):
+        self.weather = weather
+        self.label = label
+
+    def provenance(self):
+        return self.weather, self.label
+
+
+class WeatherProvenanceTest(unittest.TestCase):
+    """
+    Where the condition came from, and who wins when two sources
+    disagree. The driver can see out of the window; the forecast is
+    answering for a point several kilometres away.
+    """
+
+    def provide(self, **kwargs):
+        provider = ContextProvider(
+            clock=lambda: datetime(2026, 1, 1, 12), **kwargs
+        )
+
+        return provider, provider.update(0.0)
+
+    def test_nothing_declared_and_no_forecast_is_clear_by_default(self):
+        _, context = self.provide()
+
+        self.assertEqual(context.weather, "clear")
+        self.assertEqual(context.weather_source, "default")
+
+    def test_the_forecast_speaks_when_the_driver_does_not(self):
+        _, context = self.provide(weather_service=FakeForecast("rain"))
+
+        self.assertEqual(context.weather, "rain")
+        self.assertEqual(context.weather_source, "forecast")
+        self.assertGreater(context.weather_multiplier(), 1.0)
+
+    def test_the_driver_overrules_the_forecast(self):
+        _, context = self.provide(
+            weather="snow", weather_service=FakeForecast("clear")
+        )
+
+        self.assertEqual(context.weather, "snow")
+        self.assertEqual(context.weather_source, "driver")
+
+    def test_the_driver_can_overrule_downwards_too(self):
+        """
+        The forecast says it is raining five kilometres away; here the
+        road is dry. Saying so returns the baseline weight, and the
+        record shows it was the driver's call.
+        """
+
+        _, context = self.provide(
+            weather="clear", weather_service=FakeForecast("heavy_rain")
+        )
+
+        self.assertEqual(context.weather_multiplier(), 1.0)
+        self.assertEqual(context.weather_source, "driver")
+
+    def test_an_absent_forecast_is_neutral_but_says_so(self):
+        """
+        A 1.0 from ignorance must not be recorded as a 1.0 from a clear
+        sky. The weight is the same; the provenance is not.
+        """
+
+        _, context = self.provide(
+            weather_service=FakeForecast(None, "forecast (offline)")
+        )
+
+        self.assertEqual(context.weather, "clear")
+        self.assertEqual(context.weather_multiplier(), 1.0)
+        self.assertEqual(context.weather_source, "forecast (offline)")
+
+    def test_overriding_and_handing_control_back(self):
+        provider, _ = self.provide(weather_service=FakeForecast("rain"))
+
+        provider.override("ice")
+        self.assertEqual(provider.update(0.0).weather, "ice")
+
+        provider.override(None)
+        self.assertEqual(provider.update(0.0).weather, "rain")
+
+    def test_the_cycle_starts_from_the_forecast_and_returns_to_it(self):
+        provider, _ = self.provide(weather_service=FakeForecast("rain"))
+
+        seen = []
+
+        for _ in range(len(provider.WEATHER_CYCLE)):
+            seen.append(provider.cycle_weather())
+
+        self.assertEqual(seen[0], "clear")
+        self.assertIsNone(seen[-1])
+        self.assertEqual(provider.update(0.0).weather_source, "forecast")
+
+    def test_the_cycle_covers_every_condition(self):
+        provider, _ = self.provide()
+
+        seen = {
+            provider.cycle_weather()
+            for _ in range(len(provider.WEATHER_CYCLE))
+        }
+
+        self.assertEqual(seen, set(WEATHER_MULTIPLIERS) | {None})
+
+    def test_the_cycle_recovers_from_an_unknown_starting_value(self):
+        provider, _ = self.provide(weather="volcanic ash")
+
+        self.assertEqual(provider.cycle_weather(), "clear")
 
 
 class ContextProviderTest(unittest.TestCase):

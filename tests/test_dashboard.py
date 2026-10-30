@@ -119,6 +119,67 @@ class DashboardTest(unittest.TestCase):
         self.assertIn("dynamic", captions)
         self.assertNotIn("flat penalty table", captions)
 
+    def test_a_forecast_session_names_the_weather_and_its_source(self):
+        from risk_engine.context import DrivingContext
+
+        self.record_session(
+            context=DrivingContext(
+                hour=3,
+                elapsed=3600,
+                brightness=30.0,
+                weather="rain",
+                weather_source="forecast",
+            ),
+            dynamic=True,
+        )
+
+        app = run_dashboard(self.db_path)
+        captions = " ".join(c.value for c in app.caption)
+
+        self.assertFalse(app.exception, app.exception)
+        self.assertIn("rain", captions)
+        self.assertIn("forecast", captions)
+
+    def test_a_declared_session_says_the_driver_set_it(self):
+        """
+        The audit case. Reviewing a session is the only place the
+        difference between a forecast and an assertion can be checked,
+        so the dashboard has to carry it.
+        """
+
+        from risk_engine.context import DrivingContext
+
+        self.record_session(
+            context=DrivingContext(
+                hour=12,
+                brightness=120.0,
+                weather="snow",
+                weather_source="driver",
+            ),
+            dynamic=True,
+        )
+
+        app = run_dashboard(self.db_path)
+        captions = " ".join(c.value for c in app.caption)
+
+        self.assertFalse(app.exception, app.exception)
+        self.assertIn("snow", captions)
+        self.assertIn("driver", captions)
+
+    def test_a_session_recorded_before_weather_existed_still_opens(self):
+        """
+        The old databases have no weather column at all, and the
+        dashboard must not insist on one.
+        """
+
+        self.record_session()
+
+        app = run_dashboard(self.db_path)
+        captions = " ".join(c.value for c in app.caption)
+
+        self.assertFalse(app.exception, app.exception)
+        self.assertNotIn("Weather:", captions)
+
 
 if __name__ == "__main__":
     unittest.main()

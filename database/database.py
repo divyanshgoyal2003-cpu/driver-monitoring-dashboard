@@ -58,7 +58,9 @@ CREATE TABLE IF NOT EXISTS metrics (
     ear_threshold REAL,
     context_fatigue REAL,
     context_attention REAL,
-    weights_mode TEXT
+    weights_mode TEXT,
+    weather TEXT,
+    weather_source TEXT
 );
 
 CREATE TABLE IF NOT EXISTS events (
@@ -81,7 +83,7 @@ METRIC_COLUMNS = (
     "head_direction", "gaze_direction", "eyes_on_road", "phone_in_use",
     "seatbelt", "emotion", "emotion_confidence", "safety_score",
     "risk_level", "brightness", "ear_threshold", "context_fatigue",
-    "context_attention", "weights_mode"
+    "context_attention", "weights_mode", "weather", "weather_source"
 )
 
 # Columns added after the first release. CREATE TABLE IF NOT EXISTS
@@ -94,6 +96,8 @@ ADDED_COLUMNS = {
         ("context_fatigue", "REAL"),
         ("context_attention", "REAL"),
         ("weights_mode", "TEXT"),
+        ("weather", "TEXT"),
+        ("weather_source", "TEXT"),
     ),
 }
 

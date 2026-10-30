@@ -178,6 +178,15 @@ class SessionLogger:
             "context_attention": (
                 context.attention_multiplier() if context else None
             ),
+            # The condition AND where it came from. Logging the
+            # multiplier alone would leave a reviewer unable to tell an
+            # amplification the forecast asked for from one the driver
+            # asked for, which is the difference between evidence and
+            # assertion.
+            "weather": context.conditions if context else None,
+            "weather_source": (
+                context.weather_source if context else None
+            ),
         }
 
     def _update_counts(self, state):

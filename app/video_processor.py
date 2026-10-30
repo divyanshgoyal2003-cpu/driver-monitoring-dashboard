@@ -9,7 +9,8 @@ from app.config import (
     PHONE_DETECTION_INTERVAL,
     EMOTION_INTERVAL,
     SEATBELT_INTERVAL,
-    DYNAMIC_WEIGHTS
+    DYNAMIC_WEIGHTS,
+    LOW_LIGHT_ENHANCE
 )
 from models.detectors.yolo_face_detector import YOLOFaceDetector
 from models.detectors.yolo_object_detector import YOLOObjectDetector
@@ -25,8 +26,10 @@ from analytics.distraction_detector import DistractionDetector
 from analytics.phone_usage_detector import PhoneUsageDetector
 from analytics.emotion_analyzer import EmotionAnalyzer
 from analytics.seatbelt_monitor import SeatbeltMonitor
+from analytics.camera_monitor import CameraMonitor
 from risk_engine.scoring import DriverSafetyIndex
 from risk_engine.context import ContextProvider
+from utils.low_light import LowLightEnhancer
 from renderers.landmark_renderer import LandmarkRenderer
 from renderers.overlay_renderer import OverlayRenderer
 from renderers.dashboard_renderer import DashboardRenderer
@@ -41,9 +44,10 @@ class VideoProcessor:
     BRIGHTNESS_STRIDE = 8
 
     def __init__(self, dynamic_weights=DYNAMIC_WEIGHTS,
-                 context_provider=None):
+                 context_provider=None, enhance=LOW_LIGHT_ENHANCE):
 
         self.context_provider = context_provider or ContextProvider()
+        self.enhancer = LowLightEnhancer() if enhance else None
 
         self.face_detector = YOLOFaceDetector()
         self.landmarker = MediaPipeFaceLandmarker(FACE_LANDMARK_MODEL)
@@ -59,6 +63,7 @@ class VideoProcessor:
         self.phone_usage_detector = PhoneUsageDetector()
         self.emotion_analyzer = EmotionAnalyzer(EmotionClassifier.LABELS)
         self.seatbelt_monitor = SeatbeltMonitor()
+        self.camera_monitor = CameraMonitor()
         self.safety_index = DriverSafetyIndex(dynamic=dynamic_weights)
         self.landmark_renderer = LandmarkRenderer()
         self.overlay_renderer = OverlayRenderer()
@@ -97,7 +102,25 @@ class VideoProcessor:
 
         h, w, _ = frame.shape
 
-        # Landmarks are detected on the untouched frame; overlays are
+        # Read the light before anything touches the frame. brightness
+        # is what the confidence layer and the context layer are given,
+        # so it has to describe the camera's real view, not the lifted
+        # copy the models go on to see.
+        brightness, variance = self._luminance(frame)
+
+        camera_data = self.camera_monitor.update(
+            brightness,
+            variance,
+            timestamp
+        )
+
+        enhancement = 0.0
+
+        if self.enhancer is not None:
+            enhancement = self.enhancer.strength(brightness)
+            frame = self.enhancer.enhance(frame, brightness)
+
+        # Landmarks are detected on the unannotated frame; overlays are
         # only drawn afterwards, on a copy.
         result = self.landmarker.detect(frame, timestamp)
         landmarks = result.face_landmarks
@@ -193,13 +216,14 @@ class VideoProcessor:
 
         self.frame_index += 1
 
-        brightness = self._brightness(frame)
         context = self.context_provider.update(timestamp, brightness)
 
         self.state = {
             "timestamp": timestamp,
             "fps": self.fps,
             "brightness": brightness,
+            "camera": camera_data,
+            "enhancement": enhancement,
             "faces": faces,
             "face_count": len(faces),
             "driver_id": driver["id"] if driver else None,
@@ -244,12 +268,18 @@ class VideoProcessor:
     def close(self):
         self.landmarker.close()
 
-    def _brightness(self, frame):
-        """Mean pixel value of the frame, 0-255."""
+    def _luminance(self, frame):
+        """
+        (mean, standard deviation) of the frame's pixels, 0-255.
+
+        The spread is what separates a covered lens from a dark cabin,
+        so both come from the same sample.
+        """
 
         stride = self.BRIGHTNESS_STRIDE
+        sample = frame[::stride, ::stride]
 
-        return float(frame[::stride, ::stride].mean())
+        return float(sample.mean()), float(sample.std())
 
     def _update_fps(self):
 

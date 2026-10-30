@@ -11,12 +11,13 @@ Only multipliers of 1.0 or more are produced: context amplifies risk and
 never discounts it, so the score can never be more permissive than the
 flat baseline.
 
-What is live here, and what is not, is deliberate. `hour`, `elapsed` and
-`brightness` are measured. `weather` and `speed` are part of the
-interface but can only be set by hand, because an in-cabin camera cannot
-see the road and there is no vehicle bus to read: weather would need an
-API and a location, speed an OBD-II link. They are carried so the
-scoring already accepts them when a sensor appears.
+What is measured here, and what is not, is deliberate. `hour`, `elapsed`
+and `brightness` come from the clock and the frame. `weather` weighs the
+score but its value can only be set by hand, because an in-cabin camera
+cannot see the road: reading it would need a location and a forecast
+API. `speed` is carried and not yet weighed at all - it would need an
+OBD-II link, and without one there is nothing to calibrate a speed
+multiplier against.
 """
 
 from dataclasses import dataclass
@@ -28,7 +29,8 @@ from app.config import (
     CIRCADIAN_MULTIPLIERS,
     TIME_ON_TASK_HOURS,
     TIME_ON_TASK_MAX,
-    LOW_LIGHT_ATTENTION_MAX
+    LOW_LIGHT_ATTENTION_MAX,
+    WEATHER_MULTIPLIERS
 )
 
 
@@ -44,18 +46,32 @@ def _ramp(value, low, high):
 @dataclass(frozen=True)
 class DrivingContext:
     """
-    hour       : 0-23, local time
-    elapsed    : seconds since this session started
-    brightness : mean frame luminance 0-255, or None when not measured
-    weather    : manual override; "clear" unless set
-    speed      : km/h, None without a vehicle link
+    hour           : 0-23, local time
+    elapsed        : seconds since this session started
+    brightness     : mean frame luminance 0-255, or None when measured
+    weather        : the condition in force; "clear" unless set
+    weather_source : where that condition came from - "driver" when
+                     declared, "forecast" when fetched, "default" when
+                     nobody said. A multiplier is only as good as its
+                     input, so the input's provenance travels with it
+                     to the panel and into the session log.
+    speed          : km/h, None without a vehicle link
     """
 
     hour: int = 12
     elapsed: float = 0.0
     brightness: float = None
     weather: str = "clear"
+    weather_source: str = "default"
     speed: float = None
+
+    @property
+    def conditions(self):
+        """The weather as a lookup key: lowercased and underscored."""
+
+        key = "_".join(str(self.weather or "").lower().split())
+
+        return key or "clear"
 
     @property
     def darkness(self):
@@ -82,17 +98,38 @@ class DrivingContext:
 
         return 1.0 + TIME_ON_TASK_MAX * _ramp(hours, 0.0, TIME_ON_TASK_HOURS)
 
+    def weather_multiplier(self):
+        """
+        How much the conditions outside raise the cost of a lapse.
+
+        Unlike the circadian and time-on-task multipliers, this says
+        nothing about how likely a lapse is - rain does not make a
+        driver sleepier. It is about consequence: there is less room to
+        recover on a wet road, so the same lapse is worth more. That
+        argument holds for a microsleep and a glance away alike, so
+        this amplifies both families.
+        """
+
+        return WEATHER_MULTIPLIERS.get(self.conditions, 1.0)
+
     def fatigue_multiplier(self):
 
-        return self.circadian_multiplier() * self.time_on_task_multiplier()
+        return (
+            self.circadian_multiplier()
+            * self.time_on_task_multiplier()
+            * self.weather_multiplier()
+        )
 
     def attention_multiplier(self):
         """
         Less visibility leaves less margin for a glance away, so the
-        attention conditions weigh more in the dark.
+        attention conditions weigh more in the dark and in bad weather.
         """
 
-        return 1.0 + LOW_LIGHT_ATTENTION_MAX * self.darkness
+        return (
+            (1.0 + LOW_LIGHT_ATTENTION_MAX * self.darkness)
+            * self.weather_multiplier()
+        )
 
     def summary(self):
         """Short label for the live panel, or None when nothing applies."""
@@ -104,6 +141,9 @@ class DrivingContext:
 
         if self.time_on_task_multiplier() > 1.01:
             parts.append(f"{self.elapsed / 3600.0:.1f}h")
+
+        if self.weather_multiplier() > 1.0:
+            parts.append(self.conditions.replace("_", " "))
 
         if self.darkness > 0.05:
             parts.append("dark")
@@ -117,19 +157,75 @@ class ContextProvider:
     `elapsed` is measured from the first frame rather than the clock.
     """
 
-    def __init__(self, weather="clear", speed=None, hour=None, clock=None):
+    # What cycle_weather steps through: the forecast first, then each
+    # condition in turn.
+    WEATHER_CYCLE = (None,) + tuple(WEATHER_MULTIPLIERS)
+
+    def __init__(self, weather=None, speed=None, hour=None, clock=None,
+                 weather_service=None):
         """
-        weather / speed / hour override what cannot be sensed (or, for
-        hour, let a demo pretend it is 3am). clock is injectable for
-        tests.
+        weather is the driver's own declaration, and None means they
+        have not made one - which is what lets the forecast speak.
+        speed and hour override what cannot be sensed (or, for hour,
+        let a demo pretend it is 3am). weather_service and clock are
+        injectable for tests.
         """
 
-        self.weather = weather
+        self.declared = weather
+        self.weather_service = weather_service
         self.speed = speed
         self.hour_override = hour
         self.clock = clock or datetime.now
 
         self.start_timestamp = None
+
+    def override(self, weather):
+        """
+        The driver disagrees with the forecast. None hands control back
+        to it.
+        """
+
+        self.declared = weather
+
+    def cycle_weather(self):
+        """
+        Step the override on by one, for the live window's W key, and
+        return what is now in force. None means the forecast again.
+        """
+
+        current = (
+            self.WEATHER_CYCLE.index(self.declared)
+            if self.declared in self.WEATHER_CYCLE
+            else 0
+        )
+
+        self.declared = self.WEATHER_CYCLE[
+            (current + 1) % len(self.WEATHER_CYCLE)
+        ]
+
+        return self.declared
+
+    def _weather(self):
+        """
+        (condition, source). The driver's word beats the forecast, and
+        the forecast beats nothing.
+
+        A forecast that has not arrived or has stopped arriving falls
+        back to "clear", which is the neutral weight: a system that
+        cannot see the weather must not invent an amplification. The
+        source says so, so a 1.0 from ignorance is never mistaken on
+        the panel for a 1.0 from a clear sky.
+        """
+
+        if self.declared is not None:
+            return self.declared, "driver"
+
+        if self.weather_service is not None:
+            observed, label = self.weather_service.provenance()
+
+            return (observed if observed is not None else "clear"), label
+
+        return "clear", "default"
 
     def update(self, timestamp, brightness=None):
 
@@ -142,10 +238,13 @@ class ContextProvider:
             else self.clock().hour
         )
 
+        weather, source = self._weather()
+
         return DrivingContext(
             hour=hour,
             elapsed=max(timestamp - self.start_timestamp, 0.0),
             brightness=brightness,
-            weather=self.weather,
+            weather=weather,
+            weather_source=source,
             speed=self.speed
         )

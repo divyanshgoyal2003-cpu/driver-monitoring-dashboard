@@ -448,6 +448,34 @@ def scoring_mode(metrics):
     return metrics["weights_mode"].dropna().iloc[-1]
 
 
+def show_weather(metrics):
+    """
+    Which conditions were in force, and on whose authority.
+
+    The multiplier chart above says a penalty was amplified; only this
+    says whether a forecast asked for that or the driver did. Reviewing
+    a session is the one place that distinction can actually be
+    checked, so it is worth the line.
+    """
+
+    if not has_data(metrics, "weather"):
+        return
+
+    readings = metrics[["weather", "weather_source"]].dropna()
+
+    if readings.empty:
+        return
+
+    spells = readings.drop_duplicates()
+
+    described = ", ".join(
+        f"**{weather.replace('_', ' ')}** ({source})"
+        for weather, source in spells.itertuples(index=False)
+    )
+
+    st.caption(f"Weather: {described}.")
+
+
 def show_weighting(metrics, charts):
     """
     What the risk weights were doing: how much the situation amplified
@@ -484,11 +512,14 @@ def show_weighting(metrics, charts):
                 width="stretch",
             )
             st.caption(
-                "How much the time of day, time at the wheel and cabin "
-                "light raised each penalty. 1.0 is the flat baseline."
+                "How much the time of day, time at the wheel, cabin "
+                "light and weather raised each penalty. 1.0 is the "
+                "flat baseline."
             )
         else:
             st.caption("No context recorded.")
+
+        show_weather(metrics)
 
     with right:
         if has_data(metrics, "brightness"):

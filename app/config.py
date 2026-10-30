@@ -260,6 +260,41 @@ SEATBELT_ON_RATIO = 0.5
 SEATBELT_OFF_RATIO = 0.2
 
 # ==========================
+# Camera Obstruction
+# ==========================
+
+# A covered lens and an empty seat both leave the monitor with no face,
+# but they are not the same problem: one is the driver gone, the other
+# is the system blinded, and in a fleet it is how the system gets
+# defeated. They are told apart by variance. A dark cabin still has
+# shapes, highlights and sensor noise in it; a covered lens is flat.
+CAMERA_BLOCKED_BRIGHTNESS = 15.0
+CAMERA_BLOCKED_VARIANCE = 8.0
+
+# Both must hold for this long, so the first frames of a camera that
+# has not woken up yet do not raise it.
+CAMERA_BLOCKED_TIME = 2.0
+
+# ==========================
+# Low Light Enhancement
+# ==========================
+
+# CLAHE on the luma channel when the cabin is dim. This cannot conjure
+# signal that the sensor never captured - no software can, and infrared
+# needs hardware - but it does redistribute what little contrast there
+# is, which sometimes brings a face back within MediaPipe's reach.
+#
+# It is off above LOW_LIGHT_BRIGHTNESS because it costs a full-frame
+# colour conversion (~10 ms at 720p), and it never touches the
+# brightness the risk engine reads: enhancement does not make it more
+# trustworthy, so the confidence layer must still see the real light
+# level. Pass --no-enhance to measure with it off.
+LOW_LIGHT_ENHANCE = True
+LOW_LIGHT_BRIGHTNESS = 70.0
+LOW_LIGHT_CLIP_LIMIT = 3.0
+LOW_LIGHT_GRID = 8
+
+# ==========================
 # Driver Safety Index
 # ==========================
 
@@ -269,6 +304,7 @@ RISK_PENALTIES = {
     "microsleep": 60,
     "phone": 35,
     "distracted": 30,
+    "camera_blocked": 30,
     "driver_absent": 30,
     "drowsy": 30,
     "tired": 15,
@@ -389,6 +425,105 @@ TIME_ON_TASK_MAX = 0.25
 # conditions are amplified by up to this much in the dark.
 LOW_LIGHT_ATTENTION_MAX = 0.15
 
+# Weather, applied to the fatigue AND the attention conditions.
+#
+# This is not a claim that rain makes a driver sleepier or more easily
+# distracted. It is about what a lapse costs: a wet road lengthens the
+# stopping distance and poor visibility shortens the warning, so the
+# same two-second glance away leaves less room to recover from - and so
+# does the same microsleep. The mechanism is identical for both
+# families, which is why there is one table here and not two.
+#
+# Ordered by how much margin the road and the air leave: wet grip with
+# some visibility lost in rain, dry grip with almost no visibility in
+# fog, both poor in snow, the worst grip of all on ice. Crash-risk
+# studies put adverse weather at roughly 1.5-2x clear conditions and
+# ice far above that, but these are penalty weights inside a 100-point
+# budget rather than crash odds, and this layer is deliberately
+# conservative - see the README.
+#
+# Anything not listed weighs 1.0, so an unrecognised string cannot
+# quietly inflate the score.
+WEATHER_MULTIPLIERS = {
+    "clear": 1.00,
+    "cloudy": 1.00,
+    "rain": 1.15,
+    "heavy_rain": 1.25,
+    "fog": 1.25,
+    "snow": 1.30,
+    "ice": 1.35,
+}
+
+# ==========================
+# Weather Forecast
+# ==========================
+
+# Where the weather comes from when the driver does not say.
+#
+# Open-Meteo is free and needs no key. It answers for a POINT, not for
+# the road ahead: city-resolution, up to 15 minutes old, and silent
+# about the state of the tarmac. That is why the driver can always
+# overrule it with W, and why every reading is logged with its source -
+# a declared condition and a forecast one are not the same evidence.
+#
+# Set your coordinates to switch it on. Nothing but these numbers
+# leaves the machine, and nothing happens at all while they are None.
+WEATHER_LATITUDE = None
+WEATHER_LONGITUDE = None
+
+WEATHER_URL = "https://api.open-meteo.com/v1/forecast"
+
+# The API's own `current` block refreshes every 900 s, so asking more
+# often than that returns the same answer.
+WEATHER_REFRESH = 900.0
+WEATHER_TIMEOUT = 6.0
+
+# Two refinements on top of the reported code, because the code alone
+# can understate what the road is like.
+#
+# LIQUID rain at or below freezing is ice on the tarmac whatever the
+# forecast calls it, and visibility this low is fog-grade however clear
+# the sky is said to be. Both only ever pick the WORSE of the two
+# readings. Snow is exempt from the first: it lands already frozen and
+# grips better than a freezing-rain glaze.
+ICE_TEMPERATURE = 0.5
+FOG_VISIBILITY = 1000.0
+
+# WMO weather codes, as Open-Meteo reports them, mapped onto the seven
+# conditions above. A code that is not listed is treated as no reading
+# at all rather than as "clear": a forecast the system cannot interpret
+# must not silently remove the amplification.
+WMO_WEATHER = {
+    0: "clear",
+    1: "clear",
+    2: "cloudy",
+    3: "cloudy",
+    45: "fog",
+    48: "fog",
+    51: "rain",         # drizzle
+    53: "rain",
+    55: "rain",
+    56: "ice",          # freezing drizzle
+    57: "ice",
+    61: "rain",
+    63: "rain",
+    65: "heavy_rain",
+    66: "ice",          # freezing rain
+    67: "ice",
+    71: "snow",
+    73: "snow",
+    75: "snow",
+    77: "snow",         # snow grains
+    80: "rain",         # showers
+    81: "rain",
+    82: "heavy_rain",
+    85: "snow",
+    86: "snow",
+    95: "heavy_rain",   # thunderstorm
+    96: "heavy_rain",
+    99: "heavy_rain",
+}
+
 # Which conditions each context multiplier applies to.
 FATIGUE_CONDITIONS = ("microsleep", "drowsy", "tired", "frequent_yawning")
 ATTENTION_CONDITIONS = ("distracted", "phone")
@@ -403,8 +538,41 @@ EYE_CONDITIONS = ("microsleep", "drowsy", "tired")
 # Beep for critical and high-severity alerts (Windows only; press S to
 # mute). The cooldown is the minimum gap between beeps, in seconds.
 ENABLE_SOUND_ALERTS = True
-CRITICAL_ALERT_COOLDOWN = 1.0
-HIGH_ALERT_COOLDOWN = 3.0
+
+# Alert patterns: a sequence of (frequency Hz, duration ms, gap after
+# ms), played in order, so a tone can pulse and climb instead of
+# sitting on one note.
+#
+# A single steady beep is the easy thing to tune out, and the easy
+# thing to sleep through - the wrong property for the one alert that
+# has to reach someone whose eyes have already closed. Both patterns
+# pulse and rise, because interruption and rising pitch are what read
+# as urgent; the rousing one climbs further, ends on a long note and
+# says the whole thing twice.
+#
+# ROUSE goes to the fatigue conditions, NOTIFY to everything else. A
+# drowsy driver and a driver holding a phone are both "high" severity,
+# but only one of them has to be woken up.
+ALERT_TONE_ROUSE = (
+    (1200, 160, 70),
+    (1600, 160, 70),
+    (2100, 420, 170),
+    (1200, 160, 70),
+    (1600, 160, 70),
+    (2100, 520, 0),
+)
+
+ALERT_TONE_NOTIFY = (
+    (900, 140, 80),
+    (1200, 260, 0),
+)
+
+# Minimum gap between the STARTS of two alerts, in seconds. Each has
+# to clear its own pattern (ROUSE runs about 2.0 s, NOTIFY about 0.5 s)
+# or the alert would simply run back to back: the silence between is
+# what stops it becoming background noise.
+CRITICAL_ALERT_COOLDOWN = 3.0
+HIGH_ALERT_COOLDOWN = 4.0
 
 # ==========================
 # Session Logging

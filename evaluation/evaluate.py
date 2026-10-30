@@ -24,7 +24,7 @@ import argparse
 import sys
 
 from app.camera import CameraManager
-from app.config import SAFE_SCORE, CAUTION_SCORE
+from app.config import SAFE_SCORE, CAUTION_SCORE, WEATHER_MULTIPLIERS
 from app.video_processor import VideoProcessor
 from evaluation import labels as labels_module
 from evaluation.matching import (
@@ -101,7 +101,8 @@ class Recording:
         return self.samples[-1] - self.samples[0] if self.samples else 0.0
 
 
-def analyse(video, hour=None, weather="clear", speed=None, progress=None):
+def analyse(video, hour=None, weather=None, speed=None, progress=None,
+            enhance=True):
     """
     One pass over `video`, scoring every frame with both engines.
     """
@@ -112,7 +113,8 @@ def analyse(video, hour=None, weather="clear", speed=None, progress=None):
     # The processor owns the dynamic engine; a second, static one is
     # fed the same states so both see identical frames.
     processor = VideoProcessor(dynamic_weights=True,
-                               context_provider=provider)
+                               context_provider=provider,
+                               enhance=enhance)
     static = DriverSafetyIndex(dynamic=False)
 
     recording = Recording()
@@ -277,8 +279,17 @@ def parse_args(argv=None):
     parser.add_argument("--hour", type=int, choices=range(24),
                         metavar="0-23",
                         help="score as if the drive happened at this hour")
-    parser.add_argument("--weather", default="clear")
+    parser.add_argument("--weather",
+                        choices=sorted(WEATHER_MULTIPLIERS),
+                        help="score as if the drive happened in these "
+                             "conditions. No forecast is fetched here: "
+                             "a recording's weather was whatever it was "
+                             "at the time, not whatever it is now")
     parser.add_argument("--speed", type=float)
+    parser.add_argument("--no-enhance", action="store_true",
+                        help="do not lift dim frames before detection. "
+                             "Run the same video twice, with and "
+                             "without, to measure what it is worth")
     parser.add_argument("--quiet", action="store_true",
                         help="no progress while the video is read")
 
@@ -313,7 +324,8 @@ def main(argv=None):
             hour=args.hour,
             weather=args.weather,
             speed=args.speed,
-            progress=None if args.quiet else progress
+            progress=None if args.quiet else progress,
+            enhance=not args.no_enhance
         )
     except RuntimeError as error:
         # A mistyped filename is the usual cause, and deserves a line

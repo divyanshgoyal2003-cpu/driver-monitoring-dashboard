@@ -210,6 +210,105 @@ class ContextScalingTest(unittest.TestCase):
         self.assertLessEqual(night, day * 1.05)
 
 
+class WeatherScalingTest(unittest.TestCase):
+    """
+    What the driver actually sees change when it starts raining.
+    """
+
+    def drowsy(self):
+        return make_state(
+            drowsiness={"state": "DROWSY", "perclos": 0.30}
+        )
+
+    def test_a_glance_away_costs_more_in_the_rain(self):
+        clear = score_once(
+            distracted(10.0),
+            DrivingContext(hour=12, brightness=200, weather="clear")
+        )
+        rain = score_once(
+            distracted(10.0),
+            DrivingContext(hour=12, brightness=200, weather="rain")
+        )
+
+        self.assertGreater(
+            rain["penalties"]["distracted"],
+            clear["penalties"]["distracted"]
+        )
+        self.assertLess(rain["score"], clear["score"])
+
+    def test_drowsiness_costs_more_in_the_rain(self):
+        """
+        Rain does not make the driver sleepier, but it leaves less room
+        to recover when the eyes close, so the detection is worth more.
+        """
+
+        clear = score_once(
+            self.drowsy(),
+            DrivingContext(hour=12, brightness=200, weather="clear")
+        )
+        rain = score_once(
+            self.drowsy(),
+            DrivingContext(hour=12, brightness=200, weather="rain")
+        )
+
+        self.assertGreater(
+            rain["penalties"]["drowsy"], clear["penalties"]["drowsy"]
+        )
+
+    def test_the_seatbelt_is_not_amplified_by_weather(self):
+        """
+        Weather weighs lapses of fatigue and attention. A missing belt
+        is neither, and nothing outside the cabin changes it.
+        """
+
+        state = make_state(seatbelt={"status": "OFF", "ratio": 1.0})
+
+        clear = score_once(
+            state, DrivingContext(hour=12, weather="clear")
+        )
+        ice = score_once(
+            state, DrivingContext(hour=12, weather="ice")
+        )
+
+        self.assertAlmostEqual(
+            clear["penalties"]["no_seatbelt"],
+            ice["penalties"]["no_seatbelt"]
+        )
+
+    def test_the_static_engine_ignores_the_weather(self):
+        clear = score_once(
+            distracted(10.0),
+            DrivingContext(hour=3, weather="clear"),
+            dynamic=False
+        )
+        snow = score_once(
+            distracted(10.0),
+            DrivingContext(hour=3, weather="snow"),
+            dynamic=False
+        )
+
+        self.assertEqual(clear["score"], snow["score"])
+        self.assertAlmostEqual(
+            snow["penalties"]["distracted"],
+            RISK_PENALTIES["distracted"]
+        )
+
+    def test_the_weather_is_reported_in_the_multipliers(self):
+        """
+        The panel and the logger read these, so the amplification has
+        to be visible and not just applied.
+        """
+
+        rain = score_once(
+            distracted(10.0),
+            DrivingContext(hour=12, brightness=200, weather="rain")
+        )
+
+        self.assertGreater(
+            rain["multipliers"]["distracted"]["context"], 1.0
+        )
+
+
 class InvariantTest(unittest.TestCase):
 
     def test_severity_and_confidence_only_ever_reduce(self):
