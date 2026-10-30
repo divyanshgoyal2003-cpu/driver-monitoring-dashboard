@@ -133,6 +133,7 @@ class SessionLogger:
     def _metrics(self, state, recorded_at):
 
         risk = state["risk"]
+        context = risk.get("context")
 
         # Head angles before calibration finishes are relative to the
         # camera, not to the driver's neutral pose; leave them out
@@ -164,6 +165,19 @@ class SessionLogger:
             "emotion_confidence": _value(state, "emotion", "confidence"),
             "safety_score": risk["score"],
             "risk_level": risk["level"],
+            "brightness": state.get("brightness"),
+            "ear_threshold": _value(state, "blink", "threshold"),
+            "weights_mode": (
+                "dynamic" if risk.get("dynamic") else "static"
+            ),
+            # Logged so a session can be replayed against the other
+            # scoring mode and the two compared.
+            "context_fatigue": (
+                context.fatigue_multiplier() if context else None
+            ),
+            "context_attention": (
+                context.attention_multiplier() if context else None
+            ),
         }
 
     def _update_counts(self, state):

@@ -155,10 +155,13 @@ class Charts:
             )
         )
 
-    def line(self, data, field, title, domain=None, thresholds=()):
+    def line(self, data, field, title, domain=None, thresholds=(),
+             overlay=None, overlay_title=None):
         """
         One measure over time, with a hover crosshair and tooltip.
         thresholds: (value, label) pairs drawn as labelled hairlines.
+        overlay: another column drawn as a dashed second line, for a
+        reference that moves (the learned EAR threshold, say).
         """
 
         p = self.palette
@@ -202,6 +205,26 @@ class Charts:
         )
 
         layers = [line, targets, point, rule]
+
+        if overlay and overlay in data and data[overlay].notna().any():
+            layers.append(
+                base.mark_line(
+                    strokeWidth=1.5, color=p["series"][1], strokeDash=[4, 3]
+                ).encode(y=alt.Y(f"{overlay}:Q", title=title))
+            )
+
+            last = data.dropna(subset=[overlay]).tail(1)
+
+            layers.append(
+                alt.Chart(last).mark_text(
+                    align="right", dx=-4, dy=-6, color=p["series"][1],
+                    fontSize=11
+                ).encode(
+                    x=alt.X(f"{self.time_field}:Q"),
+                    y=alt.Y(f"{overlay}:Q"),
+                    text=alt.value(overlay_title or overlay),
+                )
+            )
 
         if thresholds:
             limits = pd.DataFrame(thresholds, columns=["value", "label"])
@@ -261,6 +284,51 @@ class Charts:
         ).encode(y="degrees:Q")
 
         return self.style(alt.layer(zero, lines, labels))
+
+    def series(self, data, fields, labels, title, domain=None):
+        """Several measures sharing one unit, with direct labels."""
+
+        p = self.palette
+
+        long = data.melt(
+            id_vars=[self.time_field],
+            value_vars=fields,
+            var_name="series",
+            value_name="value",
+        ).dropna(subset=["value"])
+
+        long["series"] = long["series"].map(dict(zip(fields, labels)))
+
+        x = alt.X(f"{self.time_field}:Q", title=self.time_title)
+        y = alt.Y(
+            "value:Q",
+            title=title,
+            scale=alt.Scale(domain=domain) if domain else alt.Undefined,
+        )
+        color = alt.Color(
+            "series:N",
+            title=None,
+            scale=alt.Scale(domain=labels, range=p["series"]),
+            legend=None,
+        )
+
+        lines = alt.Chart(long).mark_line(strokeWidth=2).encode(
+            x=x, y=y, color=color,
+            tooltip=[
+                alt.Tooltip("series:N", title=""),
+                alt.Tooltip(f"{self.time_field}:Q", title=self.time_title,
+                            format=".1f"),
+                alt.Tooltip("value:Q", title=title, format=".2f"),
+            ],
+        )
+
+        last = long.groupby("series").tail(1)
+
+        text = alt.Chart(last).mark_text(
+            align="left", dx=6, color=p["ink"], fontSize=11
+        ).encode(x=x, y=y, text="series:N")
+
+        return self.style(alt.layer(lines, text))
 
     def bars(self, data, category, value, title, label_format,
              colors=None, order=None, domain=None, integer=False):
@@ -368,6 +436,76 @@ def has_data(metrics, column):
     return column in metrics and metrics[column].notna().any()
 
 
+def scoring_mode(metrics):
+    """
+    "dynamic", "static", or None for a session recorded before the
+    weighting layers existed.
+    """
+
+    if not has_data(metrics, "weights_mode"):
+        return None
+
+    return metrics["weights_mode"].dropna().iloc[-1]
+
+
+def show_weighting(metrics, charts):
+    """
+    What the risk weights were doing: how much the situation amplified
+    each penalty, and how much light the camera had to work with.
+    Nothing is shown for a session scored with the flat table.
+    """
+
+    mode = scoring_mode(metrics)
+
+    if mode is None:
+        return
+
+    st.subheader("Risk weighting")
+
+    if mode != "dynamic":
+        st.caption(
+            "This session was scored with the flat penalty table "
+            "(`--static-weights`), so no weighting was applied."
+        )
+        return
+
+    left, right = st.columns(2)
+
+    with left:
+        if has_data(metrics, "context_fatigue"):
+            st.altair_chart(
+                charts.series(
+                    metrics,
+                    ["context_fatigue", "context_attention"],
+                    ["Fatigue", "Attention"],
+                    "Context multiplier",
+                ),
+                theme=None,
+                width="stretch",
+            )
+            st.caption(
+                "How much the time of day, time at the wheel and cabin "
+                "light raised each penalty. 1.0 is the flat baseline."
+            )
+        else:
+            st.caption("No context recorded.")
+
+    with right:
+        if has_data(metrics, "brightness"):
+            st.altair_chart(
+                charts.line(metrics, "brightness", "Cabin brightness",
+                            domain=[0, 255]),
+                theme=None,
+                width="stretch",
+            )
+            st.caption(
+                "Mean frame luminance. A dark cabin weighs attention "
+                "more and the eye measurements less."
+            )
+        else:
+            st.caption("No brightness recorded.")
+
+
 def main():
 
     st.set_page_config(
@@ -415,6 +553,16 @@ def main():
 
     charts = Charts(theme_mode(), session["duration"])
 
+    # Say which scoring engine produced these numbers, so two runs of
+    # the same drive cannot be mistaken for each other.
+    mode = scoring_mode(metrics)
+
+    if mode is not None:
+        st.caption(
+            f"Scored with **{mode}** weighting"
+            + ("" if mode == "dynamic" else " (`--static-weights`)")
+        )
+
     show_kpis(session, metrics)
 
     st.divider()
@@ -449,17 +597,23 @@ def main():
     st.subheader("Eyes and mouth")
 
     columns = st.columns(3)
+
+    # The EAR chart carries the driver's own blink threshold, so the
+    # measurement can be read against what it was actually compared to.
     small_multiples = [
-        ("ear", "Eye aspect ratio", None),
-        ("perclos", "PERCLOS (eyes closed share)", [0, 1]),
-        ("mar", "Mouth aspect ratio", None),
+        ("ear", "Eye aspect ratio", None, "ear_threshold", "threshold"),
+        ("perclos", "PERCLOS (eyes closed share)", [0, 1], None, None),
+        ("mar", "Mouth aspect ratio", None, None, None),
     ]
 
-    for column, (field, title, domain) in zip(columns, small_multiples):
+    for column, (field, title, domain, overlay, overlay_title) in zip(
+            columns, small_multiples):
         with column:
             if has_data(metrics, field):
                 st.altair_chart(
-                    charts.line(metrics, field, title, domain=domain),
+                    charts.line(metrics, field, title, domain=domain,
+                                overlay=overlay,
+                                overlay_title=overlay_title),
                     theme=None,
                     width="stretch",
                 )
@@ -490,6 +644,8 @@ def main():
             )
         else:
             st.caption("No emotion data (face not visible).")
+
+    show_weighting(metrics, charts)
 
     st.subheader("Events")
 

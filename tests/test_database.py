@@ -1,4 +1,5 @@
 import os
+import sqlite3
 import tempfile
 import unittest
 
@@ -9,11 +10,13 @@ from database.database import Database
 from database.session_logger import SessionLogger
 
 
-def make_state(timestamp, score=100.0, events=(), blinks=0, face=True):
+def make_state(timestamp, score=100.0, events=(), blinks=0, face=True,
+               context=None, dynamic=False, brightness=None):
 
     state = {
         "timestamp": timestamp,
         "fps": 20.0,
+        "brightness": brightness,
         "face_detected": face,
         "blink": None,
         "drowsiness": None,
@@ -28,6 +31,8 @@ def make_state(timestamp, score=100.0, events=(), blinks=0, face=True):
             "score": score,
             "level": "SAFE" if score >= 75 else "DANGER",
             "events": list(events),
+            "dynamic": dynamic,
+            "context": context,
         },
     }
 
@@ -37,6 +42,7 @@ def make_state(timestamp, score=100.0, events=(), blinks=0, face=True):
             "ear": np.float64(0.28),
             "blink_rate": 12.0,
             "blink_count": np.int64(blinks),
+            "threshold": 0.24,
         }
         state["head_pose"] = {"yaw": -3.0, "pitch": 2.0, "roll": 0.5,
                               "direction": "FORWARD", "calibrated": True}
@@ -79,6 +85,84 @@ class DatabaseTest(unittest.TestCase):
 
     def test_creates_the_folder(self):
         self.assertTrue(os.path.exists(self.path))
+
+    def test_weighting_columns_round_trip(self):
+        from risk_engine.context import DrivingContext
+
+        logger = SessionLogger(self.database, "0")
+        context = DrivingContext(hour=3, elapsed=3600, brightness=15.0)
+
+        for i in range(60):
+            logger.log(make_state(100.0 + i / 30.0, context=context,
+                                  dynamic=True, brightness=15.0))
+
+        logger.close()
+
+        metrics = self.database.metrics(logger.session_id)
+        row = metrics.iloc[0]
+
+        self.assertEqual(row["weights_mode"], "dynamic")
+        self.assertAlmostEqual(row["brightness"], 15.0)
+        self.assertAlmostEqual(row["ear_threshold"], 0.24)
+        self.assertAlmostEqual(row["context_fatigue"],
+                               context.fatigue_multiplier())
+        self.assertAlmostEqual(row["context_attention"],
+                               context.attention_multiplier())
+
+    def test_static_sessions_say_so(self):
+        session_id = self.run_session(seconds=2.0)
+        metrics = self.database.metrics(session_id)
+
+        self.assertEqual(metrics["weights_mode"].iloc[0], "static")
+        self.assertTrue(metrics["context_fatigue"].isna().all())
+
+    def test_a_database_from_an_older_version_is_migrated(self):
+        """
+        CREATE TABLE IF NOT EXISTS leaves an existing database on its
+        old schema, so the added columns have to be filled in by hand.
+        """
+
+        path = os.path.join(self.folder.name, "old.db")
+
+        old = sqlite3.connect(path)
+        old.executescript("""
+            CREATE TABLE sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                started_at TEXT NOT NULL, ended_at TEXT, source TEXT,
+                duration REAL, average_score REAL, minimum_score REAL,
+                blinks INTEGER, yawns INTEGER, microsleeps INTEGER,
+                distractions INTEGER, phone_uses INTEGER);
+            CREATE TABLE metrics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER NOT NULL, recorded_at TEXT NOT NULL,
+                elapsed REAL NOT NULL, safety_score REAL);
+            CREATE TABLE events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                session_id INTEGER NOT NULL, recorded_at TEXT NOT NULL,
+                elapsed REAL NOT NULL, event_type TEXT NOT NULL,
+                severity TEXT NOT NULL, message TEXT);
+            INSERT INTO sessions (started_at, source) VALUES ('t0', '0');
+            INSERT INTO metrics (session_id, recorded_at, elapsed,
+                safety_score) VALUES (1, 't0', 0.0, 88.0);
+        """)
+        old.commit()
+        old.close()
+
+        database = Database(path)
+        self.addCleanup(database.close)
+
+        columns = {
+            row[1] for row in
+            database.connection.execute("PRAGMA table_info(metrics)")
+        }
+
+        self.assertIn("weights_mode", columns)
+        self.assertIn("context_fatigue", columns)
+
+        # The rows that were already there survive.
+        metrics = database.metrics(1)
+        self.assertEqual(len(metrics), 1)
+        self.assertAlmostEqual(metrics["safety_score"].iloc[0], 88.0)
 
     def test_metrics_are_sampled_once_per_second(self):
         session_id = self.run_session(seconds=5.0)

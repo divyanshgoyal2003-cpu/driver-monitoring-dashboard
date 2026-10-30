@@ -38,7 +38,7 @@ class DashboardTest(unittest.TestCase):
         self.addCleanup(self.folder.cleanup)
         self.db_path = os.path.join(self.folder.name, "sessions.db")
 
-    def record_session(self):
+    def record_session(self, context=None, dynamic=False):
 
         database = Database(self.db_path)
         logger = SessionLogger(database, "0")
@@ -56,7 +56,9 @@ class DashboardTest(unittest.TestCase):
             score = 60.0 if 120 <= i < 180 else 100.0
 
             logger.log(make_state(t, score, events, blinks=i // 60,
-                                  face=face))
+                                  face=face, context=context,
+                                  dynamic=dynamic,
+                                  brightness=30.0 if context else None))
             t += 1 / 30
 
         logger.close()
@@ -87,6 +89,35 @@ class DashboardTest(unittest.TestCase):
 
         self.assertEqual(len(app.selectbox), 1)
         self.assertIn("camera 0", app.selectbox[0].options[0])
+
+    def test_a_static_session_says_no_weighting_was_applied(self):
+        self.record_session()
+
+        app = run_dashboard(self.db_path)
+        captions = " ".join(c.value for c in app.caption)
+
+        self.assertFalse(app.exception, app.exception)
+        self.assertIn("static", captions)
+        self.assertIn("flat penalty table", captions)
+
+    def test_a_dynamic_session_charts_its_weighting(self):
+        from risk_engine.context import DrivingContext
+
+        self.record_session(
+            context=DrivingContext(hour=3, elapsed=3600, brightness=30.0),
+            dynamic=True,
+        )
+
+        app = run_dashboard(self.db_path)
+
+        self.assertFalse(app.exception, app.exception)
+
+        headings = [s.value for s in app.subheader]
+        self.assertIn("Risk weighting", headings)
+
+        captions = " ".join(c.value for c in app.caption)
+        self.assertIn("dynamic", captions)
+        self.assertNotIn("flat penalty table", captions)
 
 
 if __name__ == "__main__":

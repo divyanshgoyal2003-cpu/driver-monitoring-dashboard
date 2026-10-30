@@ -70,6 +70,49 @@ BLINK_MAX_DURATION = MICROSLEEP_DURATION
 BLINK_RATE_WINDOW = 60.0
 
 # ==========================
+# Per-Driver EAR Calibration
+# ==========================
+
+# EAR_THRESHOLD above is a constant, and a constant assumes an eye
+# shape. Eye aperture varies enough between people that one value
+# cannot serve both ends: a driver whose open-eye EAR sits below it is
+# read as permanently closed, and one well above it may never cross it
+# even on a real blink. These settings learn the threshold per driver
+# instead; set ADAPTIVE_EAR to False to go back to the constant.
+ADAPTIVE_EAR = True
+
+# Samples are collected over this long before the threshold is fixed.
+# Long enough to contain a few natural blinks (people blink every 3-5 s)
+# without making the driver wait.
+EAR_CALIBRATION_TIME = 10.0
+
+# The open and closed ends are taken as percentiles rather than the
+# maximum and minimum, so one noisy frame cannot set the baseline.
+EAR_OPEN_PERCENTILE = 85.0
+EAR_CLOSED_PERCENTILE = 5.0
+
+# Where the threshold sits within the driver's own range. 0.4 is nearer
+# the closed end, since a blink passes through the middle quickly.
+EAR_CLOSED_FRACTION = 0.4
+
+# Used when no clear closure was seen during calibration: the threshold
+# becomes this fraction of the open-eye baseline. This still removes the
+# per-driver offset, but not the difference in range.
+EAR_OPEN_FRACTION = 0.75
+
+# The open and closed ends must differ by at least this much before the
+# two-ended form is trusted.
+EAR_MIN_RANGE = 0.08
+
+EAR_MIN_SAMPLES = 20
+
+# A learned threshold outside this range means calibration went wrong
+# (a face half out of frame, say). It is clamped and the eye signal is
+# trusted less.
+EAR_THRESHOLD_MIN = 0.12
+EAR_THRESHOLD_MAX = 0.32
+
+# ==========================
 # Yawn Detection
 # ==========================
 
@@ -145,9 +188,16 @@ DISTRACTION_DURATION = 2.0
 
 PHONE_CONFIDENCE = 0.35
 
-# Object detection is the most expensive model, so it runs on every Nth
-# frame and its result is reused in between.
-PHONE_DETECTION_INTERVAL = 3
+# Object detection is expensive, so it runs on every Nth frame and its
+# result is reused in between.
+#
+# The three heavy models are spaced 6 apart rather than 3. At 3, with
+# the offsets below, every single frame carried one of them and no
+# frame was ever cheap. At 6 half the frames run landmarks alone, which
+# measured 12.6 -> 18+ FPS. The eyes are sampled on every frame either
+# way, so the extra frames go straight into blink detection, which is
+# what the frame rate was starving.
+PHONE_DETECTION_INTERVAL = 6
 
 # A phone must be seen for this long before it counts as in use, and the
 # usage ends once no phone has been seen for PHONE_RELEASE_TIME. This
@@ -160,8 +210,12 @@ PHONE_RELEASE_TIME = 1.0
 # ==========================
 
 # The classifier runs on every Nth frame, staggered from phone detection
-# so the two models do not land on the same frame.
-EMOTION_INTERVAL = 3
+# so the two models do not land on the same frame. FER+ is the most
+# expensive model in the pipeline by some way (measured ~67 ms against
+# ~16 ms for the landmarks) while carrying the smallest penalty, so it
+# is the first thing to run less often. Its output is smoothed by
+# EmotionAnalyzer anyway, so a slower update is barely visible.
+EMOTION_INTERVAL = 6
 
 # Square face crop, as a multiple of the face box's longer side. FER+
 # was trained on tightly cropped faces.
@@ -181,7 +235,9 @@ EMOTION_ALERT_CONFIDENCE = 0.5
 # ==========================
 
 # Runs on every Nth frame, staggered from phone and emotion detection.
-SEATBELT_INTERVAL = 3
+# With all three at 6 they land on frames 0, 3 and 5 of each group,
+# leaving the rest free.
+SEATBELT_INTERVAL = 6
 
 # The strap's edges must lean between these angles from horizontal. A
 # shoulder-to-hip strap seen from the front sits at about 55-65 degrees;
@@ -236,6 +292,109 @@ DRIVER_ABSENT_TIME = 2.0
 
 # Yawns within YAWN_RATE_WINDOW that count as frequent yawning.
 YAWN_ALERT_COUNT = 3
+
+# ==========================
+# Dynamic Risk Weighting
+# ==========================
+
+# RISK_PENALTIES above is what a condition costs at its worst. The three
+# layers below scale that per frame:
+#
+#     penalty = base * severity * confidence * context
+#
+# severity  - how bad this instance is (a 6 s glance away vs a 2 s one)
+# confidence- how much the detector that found it can be trusted
+# context   - how much the situation amplifies it
+#
+# Severity and confidence can only ever reduce a penalty; context can
+# only ever raise it. So `base` stays the documented maximum any single
+# condition can cost, and the 100-point budget keeps its meaning.
+#
+# Set to False (or pass --static-weights) to score with the flat
+# penalties instead. The two modes are kept side by side so the same
+# recording can be run through both.
+DYNAMIC_WEIGHTS = True
+
+# ----- severity -----
+# Each pair is (value at which the condition starts, value at which it
+# reaches full weight). Below the first the penalty is scaled by
+# SEVERITY_FLOOR; above the second it is unscaled.
+SEVERITY_FLOOR = 0.4
+
+# Eyes closed, in seconds, measured from the microsleep threshold.
+SEVERITY_MICROSLEEP = (MICROSLEEP_DURATION, 4.0)
+
+# PERCLOS, from each state's own threshold upward.
+SEVERITY_DROWSY = (PERCLOS_DROWSY, 0.45)
+SEVERITY_TIRED = (PERCLOS_TIRED, PERCLOS_DROWSY)
+
+# Gaze off the road, in seconds.
+SEVERITY_DISTRACTED = (DISTRACTION_DURATION, 6.0)
+
+# Phone held, in seconds.
+SEVERITY_PHONE = (PHONE_MIN_DURATION, 3.0)
+
+# Yawns inside YAWN_RATE_WINDOW.
+SEVERITY_YAWNING = (YAWN_ALERT_COUNT, 8)
+
+# Face missing, in seconds.
+SEVERITY_ABSENT = (DRIVER_ABSENT_TIME, 8.0)
+
+# ----- confidence -----
+# Never zero: a condition that is active still shows its alert at full
+# strength, and only its contribution to the score is scaled.
+CONFIDENCE_FLOOR = 0.3
+
+# The seatbelt detector is a heuristic, and its OFF verdict is weakest
+# right at the boundary. Pooled ratio at SEATBELT_OFF_RATIO scales to
+# this; a ratio of 0 (no strap seen at all) scales to 1.
+CONFIDENCE_SEATBELT_AT_BOUNDARY = 0.4
+
+# (weakest reading, fully trusted reading, weight at the weakest end).
+# Smoothed emotion confidence, from the alert threshold upward.
+CONFIDENCE_EMOTION = (EMOTION_ALERT_CONFIDENCE, 0.9, 0.4)
+
+# YOLO box confidence for a phone.
+CONFIDENCE_PHONE = (PHONE_CONFIDENCE, 0.8, 0.5)
+
+# ----- context -----
+# Mean frame luminance (0-255) at which the cabin counts as dark, and at
+# which it counts as well lit.
+BRIGHTNESS_DARK = 40.0
+BRIGHTNESS_LIT = 100.0
+
+# Eye measurements get noisy in a dark cabin, so the eye-based
+# conditions are trusted less there. This is deliberately the opposite
+# push to the circadian multiplier below: risk rises at night while the
+# ability to measure it falls, and an uncertain night-time reading
+# should not hit harder than a confident daytime one.
+CONFIDENCE_EYES_DARK = 0.55
+
+# Drowsiness-related crash risk peaks in the small hours, with a
+# secondary dip after lunch. Applied to the fatigue conditions only.
+CIRCADIAN_MULTIPLIERS = (
+    # (start hour, end hour, multiplier)
+    (2, 6, 1.40),
+    (0, 2, 1.20),
+    (6, 7, 1.20),
+    (14, 16, 1.15),
+)
+
+# Time at the wheel, applied to the fatigue conditions: reaches
+# 1 + TIME_ON_TASK_MAX after TIME_ON_TASK_HOURS.
+TIME_ON_TASK_HOURS = 2.0
+TIME_ON_TASK_MAX = 0.25
+
+# Poor visibility leaves less margin for a glance away, so the attention
+# conditions are amplified by up to this much in the dark.
+LOW_LIGHT_ATTENTION_MAX = 0.15
+
+# Which conditions each context multiplier applies to.
+FATIGUE_CONDITIONS = ("microsleep", "drowsy", "tired", "frequent_yawning")
+ATTENTION_CONDITIONS = ("distracted", "phone")
+
+# Conditions whose measurement depends on readable eyes.
+EYE_CONDITIONS = ("microsleep", "drowsy", "tired")
 
 # ==========================
 # Alerts

@@ -53,7 +53,12 @@ CREATE TABLE IF NOT EXISTS metrics (
     emotion TEXT,
     emotion_confidence REAL,
     safety_score REAL,
-    risk_level TEXT
+    risk_level TEXT,
+    brightness REAL,
+    ear_threshold REAL,
+    context_fatigue REAL,
+    context_attention REAL,
+    weights_mode TEXT
 );
 
 CREATE TABLE IF NOT EXISTS events (
@@ -75,8 +80,22 @@ METRIC_COLUMNS = (
     "perclos", "drowsiness", "mar", "yaw", "pitch", "roll",
     "head_direction", "gaze_direction", "eyes_on_road", "phone_in_use",
     "seatbelt", "emotion", "emotion_confidence", "safety_score",
-    "risk_level"
+    "risk_level", "brightness", "ear_threshold", "context_fatigue",
+    "context_attention", "weights_mode"
 )
+
+# Columns added after the first release. CREATE TABLE IF NOT EXISTS
+# leaves an existing database on the old schema, so they are added by
+# hand when a database recorded by an earlier version is opened.
+ADDED_COLUMNS = {
+    "metrics": (
+        ("brightness", "REAL"),
+        ("ear_threshold", "REAL"),
+        ("context_fatigue", "REAL"),
+        ("context_attention", "REAL"),
+        ("weights_mode", "TEXT"),
+    ),
+}
 
 SUMMARY_COLUMNS = (
     "ended_at", "duration", "average_score", "minimum_score", "blinks",
@@ -97,7 +116,25 @@ class Database:
         self.closed = False
         self.connection = sqlite3.connect(path)
         self.connection.executescript(SCHEMA)
+        self._add_missing_columns()
         self.connection.commit()
+
+    def _add_missing_columns(self):
+        """Bring a database written by an earlier version up to date."""
+
+        for table, columns in ADDED_COLUMNS.items():
+
+            existing = {
+                row[1] for row in
+                self.connection.execute(f"PRAGMA table_info({table})")
+            }
+
+            for name, column_type in columns:
+                if name not in existing:
+                    self.connection.execute(
+                        f"ALTER TABLE {table} ADD COLUMN {name} "
+                        f"{column_type}"
+                    )
 
     # ----- writing -----
 

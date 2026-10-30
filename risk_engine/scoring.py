@@ -4,10 +4,27 @@ Driver Safety Index.
 Combines the output of every monitor into one score from 0 to 100
 (100 = no risk detected), a risk level, the alerts to show and the
 events to log.
+
+A condition's cost is not a constant. Its entry in RISK_PENALTIES is
+what it costs at its worst, and three layers scale that per frame:
+
+    penalty = base * severity * confidence * context
+
+Severity (how bad this instance is) and confidence (how far the
+detector can be trusted) live in risk_engine.weights and can only
+reduce a penalty. Context (time of day, time at the wheel, how much
+light there is) lives in risk_engine.context and can only raise one. So
+`base` stays the documented maximum and the 100-point budget keeps its
+meaning.
+
+Passing dynamic=False scores with the flat table instead, which is what
+--static-weights runs. Both modes are kept so one recording can be put
+through each and compared.
 """
 
 import math
 
+from risk_engine import weights
 from app.config import (
     RISK_PENALTIES,
     SAFE_SCORE,
@@ -15,7 +32,10 @@ from app.config import (
     SCORE_FALL_TIME,
     SCORE_RISE_TIME,
     DRIVER_ABSENT_TIME,
-    YAWN_ALERT_COUNT
+    YAWN_ALERT_COUNT,
+    DYNAMIC_WEIGHTS,
+    FATIGUE_CONDITIONS,
+    ATTENTION_CONDITIONS
 )
 
 
@@ -39,8 +59,10 @@ class DriverSafetyIndex:
                  caution_score=CAUTION_SCORE,
                  fall_time=SCORE_FALL_TIME, rise_time=SCORE_RISE_TIME,
                  absent_time=DRIVER_ABSENT_TIME,
-                 yawn_alert_count=YAWN_ALERT_COUNT):
+                 yawn_alert_count=YAWN_ALERT_COUNT,
+                 dynamic=DYNAMIC_WEIGHTS):
 
+        self.dynamic = dynamic
         self.penalties = dict(penalties)
         self.safe_score = safe_score
         self.caution_score = caution_score
@@ -56,15 +78,21 @@ class DriverSafetyIndex:
         self.face_lost_since = None
         self.last_yawn_count = 0
 
-    def update(self, state, timestamp):
+    def update(self, state, timestamp, context=None):
         """
-        state: VideoProcessor's per-frame state (face_detected,
-        drowsiness, yawn, distraction, phone, seatbelt, emotion).
+        state:   VideoProcessor's per-frame state (face_detected,
+                 drowsiness, yawn, distraction, phone, seatbelt,
+                 emotion).
+        context: a DrivingContext, or None to weigh every situation
+                 alike.
         """
 
         active = self._active_conditions(state, timestamp)
 
-        penalties = {name: self.penalties[name] for name in active}
+        penalties, multipliers = self._weigh(
+            active, state, context, self._absent_duration(timestamp)
+        )
+
         raw_score = max(0.0, 100.0 - sum(penalties.values()))
 
         self._smooth(raw_score, timestamp)
@@ -113,8 +141,69 @@ class DriverSafetyIndex:
             "level": level,
             "alerts": alerts,
             "events": events,
-            "penalties": penalties
+            "penalties": penalties,
+            "multipliers": multipliers,
+            "dynamic": self.dynamic,
+            "context": context
         }
+
+    def _weigh(self, active, state, context, absent_duration):
+        """
+        What each active condition costs this frame, and the three
+        factors behind it. The factors are returned so the live panel
+        can show why the score moved rather than only that it did.
+        """
+
+        penalties = {}
+        multipliers = {}
+
+        if not self.dynamic:
+            return {name: self.penalties[name] for name in active}, {}
+
+        darkness = context.darkness if context is not None else 0.0
+
+        for name in active:
+
+            severity = weights.severity(name, state, absent_duration)
+            confidence = weights.confidence(name, state, darkness)
+            amplifier = self._context_multiplier(name, context)
+
+            penalties[name] = (
+                self.penalties[name] * severity * confidence * amplifier
+            )
+            multipliers[name] = {
+                "severity": severity,
+                "confidence": confidence,
+                "context": amplifier
+            }
+
+        return penalties, multipliers
+
+    @staticmethod
+    def _context_multiplier(name, context):
+        """
+        Fatigue conditions answer to the clock and to time at the
+        wheel; attention conditions answer to how much the driver can
+        see. Nothing else is amplified.
+        """
+
+        if context is None:
+            return 1.0
+
+        if name in FATIGUE_CONDITIONS:
+            return context.fatigue_multiplier()
+
+        if name in ATTENTION_CONDITIONS:
+            return context.attention_multiplier()
+
+        return 1.0
+
+    def _absent_duration(self, timestamp):
+
+        if self.face_lost_since is None:
+            return 0.0
+
+        return max(timestamp - self.face_lost_since, 0.0)
 
     def _active_conditions(self, state, timestamp):
 

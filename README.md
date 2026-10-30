@@ -10,13 +10,13 @@ A single camera feed is analysed by several models at once. Their outputs are co
 |---|---|
 | Face Detection | YOLOv8n face model with ByteTrack IDs. The box containing the analysed face is marked as the driver. |
 | Eye Tracking | MediaPipe iris landmarks give the eye's rotation in the head. Adding head yaw gives the real gaze direction (LEFT / CENTER / RIGHT). |
-| Drowsiness Detection | Eye aspect ratio (EAR) drives blink counting. PERCLOS (share of the last minute with eyes closed) classifies the driver as AWAKE, TIRED (≥ 15%) or DROWSY (≥ 25%). Eyes closed for 1.5 s counts as a microsleep. |
+| Drowsiness Detection | Eye aspect ratio (EAR) drives blink counting, against a threshold learned from this driver rather than a constant (see [per-driver calibration](#per-driver-ear-calibration)). PERCLOS (share of the last minute with eyes closed) classifies the driver as AWAKE, TIRED (≥ 15%) or DROWSY (≥ 25%). Eyes closed for 1.5 s counts as a microsleep. |
 | Yawning Detection | Mouth aspect ratio (MAR) held open for 0.8 s. Three yawns within 5 minutes counts as frequent yawning. |
 | Head Pose Estimation | `solvePnP` on six landmarks gives yaw, pitch and roll. The neutral pose is calibrated over the first 3 s. Gaze off the road for 2 s counts as a distraction. |
 | Phone Detection | COCO-trained YOLOv8n, "cell phone" class. Counts as in use once seen for 0.5 s. |
 | Seatbelt Detection | Classical CV baseline: two parallel diagonal strap edges crossing the chest's centre line (Canny + Hough). See [limitations](#known-limitations). |
 | Emotion Recognition | FER+ (ONNX) on the driver's face, 8 emotions, smoothed over time. Angry, sad, fearful and disgusted are flagged. |
-| Driver Safety Index | Each active risk takes points off 100. The result maps to SAFE (≥ 75), CAUTION (≥ 50) or DANGER, with alerts and events. |
+| Driver Safety Index | Each active risk takes points off 100. The result maps to SAFE (≥ 75), CAUTION (≥ 50) or DANGER, with alerts and events. What a risk costs is not fixed — see [dynamic weighting](#dynamic-risk-weighting). |
 | Analytics Dashboard | Each session is saved to SQLite and explored in a Streamlit dashboard. |
 
 ## How it fits together
@@ -41,6 +41,41 @@ flowchart LR
 ```
 
 Every threshold is in [`app/config.py`](app/config.py), with a comment explaining it. Durations are in seconds rather than frames, so behaviour does not change with frame rate.
+
+## Per-driver EAR calibration
+
+A fixed EAR threshold assumes an eye shape. Eye aperture varies enough between people that one constant cannot serve everybody: a driver whose open-eye EAR sits below the threshold is read as **permanently closed**, so PERCLOS pegs at 1.0 and the microsleep alert never stops, while a driver well above it may never cross it even on a real blink.
+
+So the threshold is learned instead. Over the first 10 s the detector collects EAR samples and takes the driver's open eye as the 85th percentile and their closed eye as the 5th, then places the threshold at `closed + 0.4 × (open − closed)`. Percentiles rather than extremes, so one noisy frame cannot set the baseline. If no clear closure appears in the window it falls back to `0.75 × open`, which still removes the per-driver offset; if the result is implausible it is clamped to `[0.12, 0.32]` and the eye measurements are trusted less from then on.
+
+The baseline is **frozen** once learned. A continuously adapting one would drift down with a driver whose eyes slowly narrow over a long drive, normalising away the drowsiness it exists to detect. Press **C** to calibrate again.
+
+## Dynamic risk weighting
+
+A condition's entry in `RISK_PENALTIES` is what it costs at its worst. Three layers scale that, every frame:
+
+```
+penalty = base × severity × confidence × context
+```
+
+| Layer | Question | Range | Driven by |
+|---|---|---|---|
+| severity | How bad is *this instance*? | 0.4 – 1.0 | how long the eyes were shut, how long the gaze was away, how deep PERCLOS went |
+| confidence | How far can the detector be trusted? | 0.3 – 1.0 | YOLO box confidence, how near the seatbelt verdict sits to its boundary, how well the EAR calibrated, how much light there is |
+| context | How much does the situation amplify it? | 1.0 – 1.75 | time of day, time at the wheel, cabin brightness |
+
+Severity and confidence can only ever **reduce** a penalty; context can only ever **raise** one. Context applies to the fatigue conditions (clock and time at the wheel) and the attention conditions (light), and to nothing else.
+
+The two halves deliberately pull against each other at night. Risk rises in the small hours, but a dark cabin is also where the eye measurements are worst, so the circadian multiplier raises the weight while the confidence layer lowers it:
+
+```
+drowsy, 3am, well lit    30 × 1.00 × 1.00 × 1.40  =  42.0
+drowsy, 3am, dark cabin  30 × 1.00 × 0.55 × 1.40  =  23.1   (less than the 30 it costs at noon)
+```
+
+Without the second half the system would amplify its own noise at exactly the hour false alarms do the most damage.
+
+The panel shows `DYNAMIC` or `STATIC` beside the FPS, and a `CONTEXT ×1.40 night dark` line under the score whenever something is amplifying. `--static-weights` runs the flat table instead, so one recording can be put through both.
 
 ## Setup
 
@@ -72,6 +107,10 @@ Run it as a module from the project root. `python app/main.py` will not find the
 | `--mute` | Start with alert sounds off |
 | `--no-log` | Do not save this session |
 | `--db path.db` | Save sessions to another database (default `data/driver_monitoring.db`) |
+| `--static-weights` | Score with the flat penalty table, for comparison |
+| `--hour 3` | Pretend it is this hour, to demonstrate the circadian weighting |
+| `--weather rain` | Driving conditions. Not sensed — an in-cabin camera cannot see the road |
+| `--speed 80` | Vehicle speed in km/h. Not sensed — needs an OBD-II link |
 
 Keys: **Q**/**Esc** quit, **L** toggle landmarks, **C** recalibrate head pose, **S** toggle sound.
 
@@ -92,13 +131,34 @@ The dashboard has these sections:
 - Event log
 - Raw measurements table, with CSV download
 
+### Measuring accuracy
+
+The monitor can say what it detected, but not whether it was right. To measure that, record a drive, write down what actually happened, and let the harness compare:
+
+```bash
+python -m evaluation.evaluate --video drive.mp4 --labels drive.csv
+```
+
+Ground truth is plain CSV, typed while scrubbing through the footage. Times are seconds from the start of the video; point events need only a start, episodes need both ends:
+
+```csv
+start,end,label
+12.3,,blink
+20.0,26.5,distracted
+40.2,48.0,phone
+```
+
+Valid labels are `blink`, `yawn`, `microsleep`, `distracted`, `phone` and `no_seatbelt`. The report gives precision, recall and F1 for each: blinks and yawns are paired with their labels inside a ±0.5 s tolerance, while episodes are scored on how much of the time the two agree.
+
+The same pass also runs **both** scoring engines over the identical frames and compares them, so neither can be accused of having had the easier video. Leave `--labels` off to get just that comparison and a summary of what was detected.
+
 ### Tests
 
 ```bash
 python -m unittest discover -s tests -t .
 ```
 
-There are 110 tests. Each analyser is tested on synthetic landmarks with known geometry, including head pose sign conventions, PERCLOS windows and microsleep episodes. Seatbelt tests use synthetic straps painted onto real photos. The safety index, the database and the dashboard (run headless with Streamlit's `AppTest`) are covered too. An end-to-end test runs the real models on a sample photo that ships with ultralytics.
+There are 215 tests. Each analyser is tested on synthetic landmarks with known geometry, including head pose sign conventions, PERCLOS windows and microsleep episodes. Seatbelt tests use synthetic straps painted onto real photos. The safety index, the database and the dashboard (run headless with Streamlit's `AppTest`) are covered too. An end-to-end test runs the real models on a sample photo that ships with ultralytics.
 
 ## Demo guide
 
@@ -137,7 +197,10 @@ These are things to refine after the mid-implementation review:
 - **Left and right assume an unmirrored camera image**, which is what OpenCV delivers on Windows.
 - **MediaPipe needs a mostly frontal face.** Near-profile faces are detected by YOLO but not analysed. Small or distant faces are retried on a crop around the YOLO box.
 - **Looking down lowers the eyelids**, which can raise PERCLOS slightly.
-- **Everything runs on the CPU.** It measured about 10 FPS on the development laptop (Core i5-13420H) while another heavy program was running. Phone, emotion and seatbelt detection take turns on successive frames to spread the load.
+- **Everything runs on the CPU.** It measures about 18 FPS on the development laptop (Core i5-13420H). Phone, emotion and seatbelt detection take turns across a group of six frames, so half the frames run the landmarks alone. Spacing them 3 apart, as they were, put one heavy model on *every* frame and no frame was ever cheap; widening to 6 measured 12.6 → 18.4 FPS. FER+ is the most expensive model in the pipeline by some way (~67 ms against ~16 ms for the landmarks) while carrying the smallest penalty.
+- **Blink recall is limited by the frame rate.** A blink lasts 100–200 ms, so at 18 FPS it spans two or three frames and a short one can still be missed. Run `evaluation/evaluate.py` against a hand-labelled video to measure how many.
+- **Weather and speed are not sensed.** They are carried through `DrivingContext` and settable by hand, but an in-cabin camera cannot see the road and there is no vehicle bus to read, so nothing sets them automatically.
+- **The weighting constants are a documented policy, not a fitted model.** The circadian shape follows published work on when fatigue crashes happen, but the specific multipliers are reasoned settings in `app/config.py`, not values learned from data.
 
 ## Project structure
 
@@ -145,11 +208,14 @@ These are things to refine after the mid-implementation review:
 app/            entry point, camera, configuration, per-frame pipeline
 models/         model wrappers: YOLO face & objects, MediaPipe, FER+, seatbelt
 analytics/      blink, drowsiness, yawn, head pose, gaze, distraction,
-                phone usage, emotion smoothing, seatbelt pooling
-risk_engine/    Driver Safety Index
+                phone usage, emotion smoothing, seatbelt pooling,
+                per-driver EAR calibration
+risk_engine/    Driver Safety Index, severity/confidence weights,
+                driving context
 renderers/      live window: overlays on the frame and the side panel
 database/       SQLite session storage and logger
 dashboard/      Streamlit analytics dashboard
+evaluation/     accuracy against hand-written ground truth
 utils/          alert sound, window sizing
 tests/          unit and end-to-end tests
 ```

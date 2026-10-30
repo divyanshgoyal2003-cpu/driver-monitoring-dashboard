@@ -7,6 +7,7 @@ from app.config import CAMERA_INDEX, WINDOW_NAME, DATABASE_PATH
 from app.video_processor import VideoProcessor
 from database.database import Database
 from database.session_logger import SessionLogger
+from risk_engine.context import ContextProvider
 from utils.alert_sound import AlertSound
 from utils.display import fit_to_screen
 
@@ -42,6 +43,35 @@ def parse_args():
         help="do not save this session to the database"
     )
 
+    parser.add_argument(
+        "--static-weights",
+        action="store_true",
+        help="score with the flat penalty table instead of weighing "
+             "each risk by severity, detector confidence and context"
+    )
+
+    parser.add_argument(
+        "--hour",
+        type=int,
+        choices=range(24),
+        metavar="0-23",
+        help="pretend it is this hour, to demonstrate the circadian "
+             "weighting without waiting for 3am"
+    )
+
+    parser.add_argument(
+        "--weather",
+        default="clear",
+        help="driving conditions. Not sensed: an in-cabin camera cannot "
+             "see the road, so this is a manual override"
+    )
+
+    parser.add_argument(
+        "--speed",
+        type=float,
+        help="vehicle speed in km/h. Not sensed: needs an OBD-II link"
+    )
+
     return parser.parse_args()
 
 
@@ -54,7 +84,16 @@ def main():
     args = parse_args()
 
     camera = CameraManager(parse_source(args.source))
-    processor = VideoProcessor()
+
+    processor = VideoProcessor(
+        dynamic_weights=not args.static_weights,
+        context_provider=ContextProvider(
+            weather=args.weather,
+            speed=args.speed,
+            hour=args.hour
+        )
+    )
+
     alert_sound = AlertSound()
 
     if args.mute:

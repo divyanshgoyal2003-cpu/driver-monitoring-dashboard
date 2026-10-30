@@ -80,15 +80,19 @@ class DashboardRenderer:
 
         put_text(panel, "DRIVER MONITOR", (LABEL_X, 34), 0.75, TEXT, 2)
 
-        if SHOW_FPS:
-            put_text_right(
-                panel,
-                f"{state['fps']:.1f} FPS",
-                self.panel_width - LABEL_X,
-                34,
-                0.5,
-                MUTED
-            )
+        # Naming the scoring mode on screen keeps the two engines apart
+        # in a demo and in screenshots.
+        mode = "DYNAMIC" if state["risk"]["dynamic"] else "STATIC"
+        status = f"{mode}  {state['fps']:.1f} FPS" if SHOW_FPS else mode
+
+        put_text_right(
+            panel,
+            status,
+            self.panel_width - LABEL_X,
+            34,
+            0.5,
+            MUTED
+        )
 
         y = 50
         self._divider(panel, y)
@@ -120,9 +124,37 @@ class DashboardRenderer:
                           color, -1)
 
         y += 76
+
+        # Why the score is being weighed the way it is, when it is being
+        # weighed at all: a score that moves for invisible reasons is
+        # worse than a blunt one.
+        line = self._context_line(risk)
+
+        if line:
+            put_text(panel, line, (LABEL_X, y + 12), 0.42, MUTED)
+            y += 20
+
         self._divider(panel, y)
 
         return y + 4
+
+    @staticmethod
+    def _context_line(risk):
+
+        context = risk.get("context")
+
+        if not risk.get("dynamic") or context is None:
+            return None
+
+        peak = max(context.fatigue_multiplier(),
+                   context.attention_multiplier())
+
+        if peak <= 1.01:
+            return None
+
+        summary = context.summary()
+
+        return f"CONTEXT x{peak:.2f}" + (f"  {summary}" if summary else "")
 
     def _draw_alerts(self, panel, alerts):
 
@@ -206,12 +238,23 @@ class DashboardRenderer:
 
         closed = blink["eyes_closed"]
 
+        # The threshold is this driver's own, so show what the EAR is
+        # being measured against rather than the number alone.
+        detail = f"EAR {blink['ear']:.2f}"
+
+        if blink.get("threshold") is not None:
+            detail += (
+                f" / {blink['threshold']:.2f}"
+                if blink.get("calibrated", True)
+                else " calibrating"
+            )
+
         return [
             (
                 "EYES",
                 "CLOSED" if closed else "OPEN",
                 BAD if closed else GOOD,
-                f"EAR {blink['ear']:.2f}"
+                detail
             ),
             (
                 "BLINKS",

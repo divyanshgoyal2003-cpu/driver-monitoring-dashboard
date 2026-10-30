@@ -8,7 +8,8 @@ from app.config import (
     SHOW_LANDMARKS,
     PHONE_DETECTION_INTERVAL,
     EMOTION_INTERVAL,
-    SEATBELT_INTERVAL
+    SEATBELT_INTERVAL,
+    DYNAMIC_WEIGHTS
 )
 from models.detectors.yolo_face_detector import YOLOFaceDetector
 from models.detectors.yolo_object_detector import YOLOObjectDetector
@@ -25,6 +26,7 @@ from analytics.phone_usage_detector import PhoneUsageDetector
 from analytics.emotion_analyzer import EmotionAnalyzer
 from analytics.seatbelt_monitor import SeatbeltMonitor
 from risk_engine.scoring import DriverSafetyIndex
+from risk_engine.context import ContextProvider
 from renderers.landmark_renderer import LandmarkRenderer
 from renderers.overlay_renderer import OverlayRenderer
 from renderers.dashboard_renderer import DashboardRenderer
@@ -34,7 +36,14 @@ class VideoProcessor:
 
     NOSE = 1
 
-    def __init__(self):
+    # The frame is sampled every Nth pixel to read its brightness:
+    # exact enough for a 0-255 scale, and effectively free.
+    BRIGHTNESS_STRIDE = 8
+
+    def __init__(self, dynamic_weights=DYNAMIC_WEIGHTS,
+                 context_provider=None):
+
+        self.context_provider = context_provider or ContextProvider()
 
         self.face_detector = YOLOFaceDetector()
         self.landmarker = MediaPipeFaceLandmarker(FACE_LANDMARK_MODEL)
@@ -50,7 +59,7 @@ class VideoProcessor:
         self.phone_usage_detector = PhoneUsageDetector()
         self.emotion_analyzer = EmotionAnalyzer(EmotionClassifier.LABELS)
         self.seatbelt_monitor = SeatbeltMonitor()
-        self.safety_index = DriverSafetyIndex()
+        self.safety_index = DriverSafetyIndex(dynamic=dynamic_weights)
         self.landmark_renderer = LandmarkRenderer()
         self.overlay_renderer = OverlayRenderer()
         self.dashboard_renderer = DashboardRenderer()
@@ -70,11 +79,15 @@ class VideoProcessor:
         # logging.
         self.state = {}
 
-    def process(self, frame, timestamp=None):
+    def process(self, frame, timestamp=None, render=True):
         """
         timestamp is in seconds and drives every time-based threshold.
         It defaults to wall-clock time; pass the video position when
         processing a file.
+
+        render=False fills in self.state and returns None, skipping the
+        overlays. Offline analysis (see the evaluation package) does not
+        need a picture, and drawing one is most of the cheap frames.
         """
 
         if timestamp is None:
@@ -180,9 +193,13 @@ class VideoProcessor:
 
         self.frame_index += 1
 
+        brightness = self._brightness(frame)
+        context = self.context_provider.update(timestamp, brightness)
+
         self.state = {
             "timestamp": timestamp,
             "fps": self.fps,
+            "brightness": brightness,
             "faces": faces,
             "face_count": len(faces),
             "driver_id": driver["id"] if driver else None,
@@ -200,7 +217,12 @@ class VideoProcessor:
             "seatbelt": seatbelt_data
         }
 
-        self.state["risk"] = self.safety_index.update(self.state, timestamp)
+        self.state["risk"] = self.safety_index.update(
+            self.state, timestamp, context
+        )
+
+        if not render:
+            return None
 
         annotated = frame.copy()
 
@@ -212,12 +234,22 @@ class VideoProcessor:
         return self.dashboard_renderer.draw(annotated, self.state)
 
     def recalibrate(self):
+        """Learn the driver's neutral head pose and EAR range again."""
 
         if self.head_pose_estimator is not None:
             self.head_pose_estimator.start_calibration()
 
+        self.blink_detector.recalibrate()
+
     def close(self):
         self.landmarker.close()
+
+    def _brightness(self, frame):
+        """Mean pixel value of the frame, 0-255."""
+
+        stride = self.BRIGHTNESS_STRIDE
+
+        return float(frame[::stride, ::stride].mean())
 
     def _update_fps(self):
 

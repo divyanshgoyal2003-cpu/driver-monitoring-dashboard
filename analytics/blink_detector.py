@@ -2,8 +2,10 @@ from collections import deque
 
 from scipy.spatial import distance
 
+from analytics.ear_calibrator import EarCalibrator
 from app.config import (
     EAR_THRESHOLD,
+    ADAPTIVE_EAR,
     BLINK_MIN_DURATION,
     BLINK_MAX_DURATION,
     BLINK_RATE_WINDOW
@@ -18,7 +20,8 @@ class BlinkDetector:
     def __init__(self, ear_threshold=EAR_THRESHOLD,
                  min_duration=BLINK_MIN_DURATION,
                  max_duration=BLINK_MAX_DURATION,
-                 rate_window=BLINK_RATE_WINDOW):
+                 rate_window=BLINK_RATE_WINDOW,
+                 adaptive=ADAPTIVE_EAR):
 
         self.blink_count = 0
         self.closed_since = None
@@ -29,6 +32,20 @@ class BlinkDetector:
         self.MIN_DURATION = min_duration
         self.MAX_DURATION = max_duration
         self.RATE_WINDOW = rate_window
+
+        # The threshold is learned from this driver rather than fixed;
+        # until calibration finishes it returns EAR_THRESHOLD.
+        self.calibrator = (
+            EarCalibrator(default_threshold=ear_threshold)
+            if adaptive
+            else None
+        )
+
+    def recalibrate(self):
+        """Learn this driver's EAR baseline again (the C key)."""
+
+        if self.calibrator is not None:
+            self.calibrator.start()
 
     def eye_aspect_ratio(self, eye):
         A = distance.euclidean(eye[1], eye[5])
@@ -67,7 +84,14 @@ class BlinkDetector:
 
         ear = (left_ear + right_ear) / 2
 
-        eyes_closed = ear < self.EAR_THRESHOLD
+        if self.calibrator is not None:
+            threshold = self.calibrator.add(ear, timestamp)
+            confidence = self.calibrator.confidence
+        else:
+            threshold = self.EAR_THRESHOLD
+            confidence = 1.0
+
+        eyes_closed = ear < threshold
 
         if eyes_closed:
             if self.closed_since is None:
@@ -97,7 +121,14 @@ class BlinkDetector:
             "blink_count": self.blink_count,
             "blink_rate": self._blink_rate(timestamp),
             "eyes_closed": eyes_closed,
-            "closed_duration": closed_duration
+            "closed_duration": closed_duration,
+            "threshold": threshold,
+            "calibrated": (
+                self.calibrator.calibrated
+                if self.calibrator is not None
+                else True
+            ),
+            "eye_confidence": confidence
         }
 
     def _blink_rate(self, timestamp):
