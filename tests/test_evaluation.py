@@ -93,6 +93,152 @@ class LabelParsingTest(unittest.TestCase):
         self.assertFalse(Label("blink", 2.0).covers(2.0))
 
 
+class CoverDirectiveTest(unittest.TestCase):
+    """
+    Which labels a file claims to have gone looking for.
+
+    Partial ground truth is the normal case, and without this the
+    harness scores an unlabelled detector against zero and reports it
+    at 0% precision - which reads as a broken detector rather than an
+    unchecked one.
+    """
+
+    def test_no_directive_claims_everything(self):
+        self.assertIsNone(parse(["1.0,,blink"]).covers)
+
+    def test_a_directive_is_read(self):
+        truth = parse([
+            "#cover: distracted, phone",
+            "20.0,26.5,distracted",
+        ])
+
+        self.assertEqual(truth.covers, frozenset({"distracted", "phone"}))
+
+    def test_spaces_instead_of_commas_are_fine(self):
+        truth = parse(["#cover: distracted phone", "20.0,26.5,distracted"])
+
+        self.assertEqual(truth.covers, frozenset({"distracted", "phone"}))
+
+    def test_case_does_not_matter(self):
+        truth = parse(["#COVER: Distracted", "20.0,26.5,distracted"])
+
+        self.assertEqual(truth.covers, frozenset({"distracted"}))
+
+    def test_a_label_may_be_covered_without_ever_occurring(self):
+        """
+        The useful case: looked for, never happened. That is a real
+        measurement of zero, not an absence of one.
+        """
+
+        truth = parse(["#cover: phone", "20.0,26.5,distracted"])
+
+        self.assertEqual(truth.covers, frozenset({"phone"}))
+        self.assertEqual(len(truth), 1)
+
+    def test_an_unknown_name_is_rejected(self):
+        with self.assertRaises(LabelError) as caught:
+            parse(["#cover: sleepiness", "1.0,,blink"])
+
+        self.assertIn("sleepiness", str(caught.exception))
+
+    def test_an_empty_directive_is_rejected(self):
+        """
+        Ambiguous between "everything" and "nothing", so it is neither.
+        """
+
+        with self.assertRaises(LabelError):
+            parse(["#cover:", "1.0,,blink"])
+
+    def test_two_directives_are_rejected(self):
+        with self.assertRaises(LabelError):
+            parse(["#cover: phone", "#cover: blink", "1.0,,blink"])
+
+    def test_it_is_still_a_list_of_labels(self):
+        """Callers that only want the labels should not have to care."""
+
+        truth = parse(["#cover: blink", "1.0,,blink", "2.0,,blink"])
+
+        self.assertEqual(len(truth), 2)
+        self.assertEqual(len(labels_module.of_type(truth, "blink")), 2)
+
+
+class CoveredScoringTest(unittest.TestCase):
+
+    def build(self):
+        recording = Recording()
+
+        for i in range(10):
+            state = {
+                "blink": {"blink_count": 1 if i >= 2 else 0},
+                "yawn": {"yawn_count": 0},
+                "drowsiness": {"microsleep": False},
+                "distraction": {"distracted": 3 <= i < 7},
+                "phone": {"in_use": False},
+                "seatbelt": {"status": "ON"},
+            }
+            risk = {"score": 100.0}
+            recording.add(state, float(i), risk, risk)
+
+        return recording
+
+    def test_an_uncovered_label_is_not_scored(self):
+        """
+        Without the directive this same recording reports distracted at
+        0% precision - see test_a_detection_with_no_label_is_still_
+        reported, which is correct for complete ground truth.
+        """
+
+        truth = parse(["#cover: blink", "2.0,,blink"])
+        results = dict(score_against(self.build(), truth))
+
+        self.assertIn("blink", results)
+        self.assertNotIn("distracted", results)
+
+    def test_a_covered_label_is_scored_even_when_it_never_happened(self):
+        truth = parse(["#cover: blink, distracted", "2.0,,blink"])
+        results = dict(score_against(self.build(), truth))
+
+        self.assertIn("distracted", results)
+        self.assertEqual(results["distracted"].precision, 0.0)
+
+    def test_the_report_names_what_went_unmeasured(self):
+        """
+        Silence would read as "the detector found nothing", which is a
+        different claim from "nobody checked".
+        """
+
+        recording = self.build()
+        truth = parse(["#cover: blink", "2.0,,blink"])
+
+        report = format_accuracy(
+            score_against(recording, truth), recording, truth.covers
+        )
+
+        self.assertIn("Not measured", report)
+        self.assertIn("distracted", report)
+        self.assertIn("1 detected", report)
+
+    def test_nothing_is_named_when_nothing_was_detected(self):
+        recording = self.build()
+        truth = parse(["#cover: blink, distracted", "2.0,,blink"])
+
+        report = format_accuracy(
+            score_against(recording, truth), recording, truth.covers
+        )
+
+        self.assertNotIn("Not measured", report)
+
+    def test_a_complete_file_names_nothing(self):
+        recording = self.build()
+        truth = parse(["2.0,,blink"])
+
+        report = format_accuracy(
+            score_against(recording, truth), recording, truth.covers
+        )
+
+        self.assertNotIn("Not measured", report)
+
+
 class PointMatchingTest(unittest.TestCase):
 
     def labels(self, *times):

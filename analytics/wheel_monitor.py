@@ -64,11 +64,40 @@ class WheelMonitor:
 
         return self.sightings >= self.min_sightings
 
-    def update(self, observation, timestamp):
+    def update(self, observation, timestamp, blocked=False):
         """
         observation: MediaPipeHandLandmarker.detect() output, or None on
                      frames where the detector did not run.
+        blocked:     whether the lens is covered.
+
+        A covered lens is the same situation as a wheel out of shot,
+        arrived at differently: the monitor cannot see, so an absence of
+        hands is not evidence. Without this the clock would keep running
+        while the camera was blind and the driver would be told to take
+        hold of a wheel nobody could see -- charging one cause twice,
+        which is exactly what suppressing DRIVER NOT VISIBLE while
+        blocked already avoids.
         """
+
+        if blocked:
+            self.count = 0
+            self.missing_since = None
+            self.status = "UNKNOWN"
+            self.hands_off_active = False
+
+            # Sightings are left alone rather than cleared. They expire
+            # on their own, and a lens covered for a moment should not
+            # cost the monitor the right to judge once it is uncovered.
+            self._forget_old(timestamp)
+
+            return {
+                "status": self.status,
+                "count": 0,
+                "hands_off": False,
+                "hands_off_count": self.hands_off_count,
+                "missing_for": 0.0,
+                "can_see": self.can_see
+            }
 
         if observation is not None:
             self.count = observation["count"]

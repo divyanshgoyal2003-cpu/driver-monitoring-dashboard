@@ -223,10 +223,13 @@ class VideoProcessor:
         # emotion and seatbelt models leave free.
         hand_observation = None
 
-        if self.frame_index % HAND_DETECTION_INTERVAL == 2:
+        if (self.frame_index % HAND_DETECTION_INTERVAL == 2
+                and not camera_data["blocked"]):
             hand_observation = self.hand_landmarker.detect(frame, timestamp)
 
-        wheel_data = self.wheel_monitor.update(hand_observation, timestamp)
+        wheel_data = self.wheel_monitor.update(
+            hand_observation, timestamp, blocked=camera_data["blocked"]
+        )
 
         self.frame_index += 1
 

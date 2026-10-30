@@ -211,6 +211,96 @@ class HandsOffScoringTest(unittest.TestCase):
         self.assertEqual(without, 1.0)
 
 
+class BlockedLensTest(unittest.TestCase):
+    """
+    A covered lens is a wheel out of shot arrived at differently.
+
+    This was found by running the harness over a recording, not by a
+    test: the clip covered the lens for eight seconds and the report
+    came back with a hands-off episode nobody had performed.
+    """
+
+    def ready(self):
+        wheel = monitor()
+        feed(wheel, 2, 0.0, 2.0)
+
+        return wheel
+
+    def blind(self, wheel, start, end, step=0.5):
+        result = None
+        timestamp = start
+
+        while timestamp <= end + 1e-9:
+            result = wheel.update(None, timestamp, blocked=True)
+            timestamp += step
+
+        return result
+
+    def test_a_blocked_lens_does_not_report_hands_off(self):
+        result = self.blind(self.ready(), 3.0, 20.0)
+
+        self.assertEqual(result["status"], "UNKNOWN")
+        self.assertFalse(result["hands_off"])
+
+    def test_a_blocked_lens_counts_no_episodes(self):
+        wheel = self.ready()
+
+        self.blind(wheel, 3.0, 40.0)
+
+        self.assertEqual(wheel.hands_off_count, 0)
+
+    def test_the_clock_does_not_run_while_blind(self):
+        """
+        Otherwise the moment the lens is uncovered the monitor has
+        several seconds of accumulated absence in hand and alarms
+        before the detector has looked even once.
+        """
+
+        wheel = self.ready()
+
+        self.blind(wheel, 3.0, 30.0)
+        result = wheel.update(None, 30.5)
+
+        self.assertAlmostEqual(result["missing_for"], 0.0)
+        self.assertFalse(result["hands_off"])
+
+    def test_a_brief_block_does_not_cost_the_right_to_judge(self):
+        """
+        Sightings expire on their own schedule; they are not thrown
+        away because a hand passed over the lens.
+        """
+
+        wheel = self.ready()
+
+        self.blind(wheel, 3.0, 6.0)
+
+        self.assertTrue(wheel.can_see)
+
+    def test_it_judges_again_once_the_lens_is_clear(self):
+        wheel = self.ready()
+
+        self.blind(wheel, 3.0, 10.0)
+        result = feed(wheel, 0, 10.5, 20.0)
+
+        self.assertEqual(result["status"], "NONE")
+        self.assertTrue(result["hands_off"])
+
+    def test_a_blocked_lens_while_hands_were_off_stops_claiming(self):
+        """
+        The episode was real until the view was lost. Once it is lost
+        the monitor has nothing to say about it.
+        """
+
+        wheel = self.ready()
+
+        running = feed(wheel, 0, 3.0, 10.0)
+        self.assertTrue(running["hands_off"])
+
+        result = self.blind(wheel, 10.5, 14.0)
+
+        self.assertFalse(result["hands_off"])
+
+
 class EpisodeCountTest(unittest.TestCase):
     """
     One spell of hands off the wheel counts once, however long it

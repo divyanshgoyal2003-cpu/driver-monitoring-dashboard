@@ -7,6 +7,7 @@ happened. This is the format they write it in, kept as plain CSV so it
 can be typed in a text editor or a spreadsheet while scrubbing through
 the footage:
 
+    #cover: distracted, phone
     start,end,label
     12.3,,blink
     15.1,,blink
@@ -17,6 +18,18 @@ the footage:
 Times are seconds from the start of the video, matching the timestamps
 CameraManager derives for a file. Point events (a blink, a yawn) need
 only a start. Episodes (looking away, holding a phone) need both ends.
+
+The optional `#cover:` line says which labels the file claims to have
+looked for. It exists because partial ground truth is the normal
+case: labelling every blink in three minutes of video is an hour's
+work, and labelling the episodes is five minutes. Without the line,
+a file that labels only the episodes would score blinks against zero
+and report the blink detector at 0% precision -- which reads as a
+broken detector rather than as an unlabelled one. A measurement that
+misleads is worse than a gap that admits it.
+
+Leave the line out and everything is scored, which is right for
+ground truth that is genuinely complete.
 """
 
 import csv
@@ -34,9 +47,24 @@ INTERVAL_LABELS = (
 
 LABELS = POINT_LABELS + INTERVAL_LABELS
 
+# Declares which labels a file went looking for.
+COVER = "#cover:"
+
 
 class LabelError(ValueError):
     """A ground truth file that cannot be read as written."""
+
+
+class GroundTruth(list):
+    """
+    The labels, and which labels were looked for.
+
+    A list, because that is all most callers want. `covers` is None
+    when the file made no claim, which means everything is fair to
+    score.
+    """
+
+    covers = None
 
 
 class Label:
@@ -78,6 +106,11 @@ def parse(lines):
 
     labels = []
 
+    # Read once: the cover directive lives in a comment, and the
+    # reader below throws comments away.
+    lines = list(lines)
+    covers = _covers(lines)
+
     rows = csv.reader(
         line for line in lines
         if line.strip() and not line.lstrip().startswith("#")
@@ -109,7 +142,51 @@ def parse(lines):
 
         labels.append(_build(number, name, start, end))
 
-    return sorted(labels, key=lambda label: label.start)
+    truth = GroundTruth(sorted(labels, key=lambda label: label.start))
+    truth.covers = covers
+
+    return truth
+
+
+def _covers(lines):
+    """
+    The labels named on a `#cover:` line, or None if there is none.
+    """
+
+    found = [
+        line.strip()[len(COVER):]
+        for line in lines
+        if line.strip().lower().startswith(COVER)
+    ]
+
+    if not found:
+        return None
+
+    if len(found) > 1:
+        raise LabelError(
+            f"more than one {COVER} line. Which one applies is "
+            f"anyone's guess, so neither is used"
+        )
+
+    names = [
+        name.strip().lower()
+        for name in found[0].replace(",", " ").split()
+    ]
+
+    if not names:
+        raise LabelError(
+            f"{COVER} names nothing. Leave the line out to score "
+            f"every label"
+        )
+
+    for name in names:
+        if name not in LABELS:
+            raise LabelError(
+                f"{COVER} names unknown label {name!r}. Expected "
+                f"one of {', '.join(LABELS)}"
+            )
+
+    return frozenset(names)
 
 
 def parse_file(path):

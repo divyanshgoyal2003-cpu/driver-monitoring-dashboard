@@ -153,11 +153,24 @@ def analyse(video, hour=None, weather=None, speed=None, progress=None,
 
 
 def score_against(recording, truth):
-    """Precision and recall per label. Returns [(name, Score)]."""
+    """
+    Precision and recall per label. Returns [(name, Score)].
+
+    Labels the file did not claim to cover are left out rather than
+    scored against nothing: an unlabelled detector would otherwise
+    report 0% precision and read as a broken one.
+    """
 
     results = []
+    covers = getattr(truth, "covers", None)
+
+    def scored(name):
+        return covers is None or name in covers
 
     for name in labels_module.POINT_LABELS:
+        if not scored(name):
+            continue
+
         expected = labels_module.of_type(truth, name)
 
         if not expected and not recording.points[name]:
@@ -170,6 +183,9 @@ def score_against(recording, truth):
         results.append((name, score))
 
     for name in labels_module.INTERVAL_LABELS:
+        if not scored(name):
+            continue
+
         expected = labels_module.of_type(truth, name)
 
         if not expected and not any(recording.flags[name]):
@@ -193,7 +209,7 @@ def _percent(value):
     return "    --" if value is None else f"{value * 100:5.1f}%"
 
 
-def format_accuracy(results):
+def format_accuracy(results, recording=None, covers=None):
 
     lines = [
         "Detection accuracy",
@@ -212,7 +228,43 @@ def format_accuracy(results):
     if not results:
         lines.append("  (nothing labelled and nothing detected)")
 
+    skipped = _unmeasured(recording, covers)
+
+    if skipped:
+        # Naming these matters. A reader who does not find blink in the
+        # table above could reasonably conclude the detector found
+        # nothing, when the truth is that nobody checked it.
+        lines += [
+            "",
+            "  Not measured, because the labels do not cover them:",
+            f"    {', '.join(skipped)}",
+        ]
+
     return "\n".join(lines)
+
+
+def _unmeasured(recording, covers):
+    """
+    Labels left out of the scoring that the monitor detected anyway. A
+    label nobody looked for and nothing found is not worth a line.
+    """
+
+    if recording is None or covers is None:
+        return []
+
+    names = []
+
+    for name in labels_module.POINT_LABELS:
+        if name not in covers and recording.points[name]:
+            found = len(recording.points[name])
+            names.append(f"{name} ({found} detected)")
+
+    for name in labels_module.INTERVAL_LABELS:
+        if name not in covers and any(recording.flags[name]):
+            episodes = len(recording.spans(name))
+            names.append(f"{name} ({episodes} detected)")
+
+    return names
 
 
 def format_detections(recording):
@@ -352,7 +404,11 @@ def main(argv=None):
         print("  No --labels given, so there is nothing to check these")
         print("  against. See evaluation/labels.py for the format.")
     else:
-        print(format_accuracy(score_against(recording, truth)))
+        print(format_accuracy(
+            score_against(recording, truth),
+            recording,
+            getattr(truth, "covers", None)
+        ))
 
     print()
     print(format_comparison(recording))

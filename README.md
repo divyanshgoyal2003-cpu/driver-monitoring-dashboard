@@ -177,6 +177,17 @@ case, which is recorded as a reading rather than left blank. A
 reviewer who cannot tell "the wheel was out of shot" from "the
 driver never let go" has been told nothing.
 
+**A covered lens is treated as a wheel out of shot.** The monitor
+cannot see, so the clock stops and the status drops to UNKNOWN until
+the view comes back. This was not designed in; it was found by
+pointing the harness at a clip whose lens was covered for eight
+seconds and getting back a hands-off episode nobody had performed.
+The alert was charging one cause twice -- the same mistake that
+suppressing DRIVER NOT VISIBLE while blocked already avoids -- and
+it cost a phantom 25 points for every blocked frame. Sightings are
+left to expire on their own rather than cleared, so a hand passing
+over the lens does not cost the monitor its right to judge.
+
 `hands_off` costs 25 points, scaled by how long the hands have been
 gone: 3 s is the floor and 10 s is the full penalty. It is an attention
 condition, so the context layer applies — hands off the wheel on ice
@@ -264,9 +275,29 @@ The monitor can say what it detected, but not whether it was right. To measure t
 python -m evaluation.evaluate --video drive.mp4 --labels drive.csv
 ```
 
-Ground truth is plain CSV, typed while scrubbing through the footage. Times are seconds from the start of the video; point events need only a start, episodes need both ends:
+#### Recording one
+
+Writing ground truth by hand means scrubbing a video with a notepad, guessing at the frame a yawn ended. That is slow enough that it does not get done, which is why these detectors went unmeasured for so long. So the recording is scripted:
+
+```bash
+python -m evaluation.record_session --video drive.mp4 --labels drive.csv
+```
+
+It prompts you through about two minutes of cues — look away, hold a phone up, close your eyes, drop your hands, cover the lens — and writes the label file from the same schedule it drove. Recording and labelling become one pass.
+
+**The labels say what you were asked to do, not what you did.** Nobody times a yawn to the frame, cues get missed, and a hand wanders back into shot early. So treat the CSV as a first draft to correct against the video, which is what the comment at the top of it says. Two things it deliberately will not do:
+
+- **The cue is never burned into the recording.** It is drawn on the preview window only, because text painted onto the frame would change the brightness and variance the obstruction and low-light detectors read — the recording would no longer be the thing being measured.
+- **It does not label blinks or yawns.** Those are point events a tenth of a second long, and a cue card cannot place them.
+
+The cues are long on purpose. Every episode detector waits before it commits, so a four-second cue would be mostly dwell time and would score as a miss for reasons that have nothing to do with accuracy. Even at eight seconds the dwell is visible: a `camera_blocked` episode held for 8 s scores 100% precision and 75% recall, and that missing quarter is exactly the 2 s the detector spends making sure. Read recall on short episodes with that in mind.
+
+#### The format
+
+Ground truth is plain CSV. Times are seconds from the start of the video; point events need only a start, episodes need both ends:
 
 ```csv
+#cover: distracted, phone
 start,end,label
 12.3,,blink
 20.0,26.5,distracted
@@ -274,6 +305,8 @@ start,end,label
 ```
 
 Valid labels are `blink`, `yawn`, `microsleep`, `distracted`, `phone`, `no_seatbelt`, `camera_blocked` and `hands_off`. The report gives precision, recall and F1 for each: blinks and yawns are paired with their labels inside a ±0.5 s tolerance, while episodes are scored on how much of the time the two agree.
+
+The optional `#cover:` line names the labels the file went looking for, and exists because partial ground truth is the normal case — labelling every blink in three minutes is an hour's work, labelling the episodes is five minutes. Without it, a file covering only the episodes scores blinks against zero and reports the blink detector at **0% precision**, which reads as a broken detector rather than an unlabelled one. Anything left out is listed under *Not measured* instead, with how many were detected, so a gap cannot pass for a clean sheet. Leave the line out and everything is scored, which is right for ground truth that is genuinely complete.
 
 The same pass also runs **both** scoring engines over the identical frames and compares them, so neither can be accused of having had the easier video. Leave `--labels` off to get just that comparison and a summary of what was detected.
 
@@ -285,7 +318,8 @@ The same pass also runs **both** scoring engines over the identical frames and c
 python -m unittest discover -s tests -t .
 ```
 
-There are 373 tests. Each analyser is tested on synthetic landmarks with known geometry, including head pose sign conventions, PERCLOS windows and microsleep episodes. Seatbelt tests use synthetic straps painted onto real photos. The safety index, the weighting layers, the camera-obstruction, hands-on-wheel and low-light modules, the forecast client (driven with canned responses, never the network), the alert patterns, the database and the dashboard (run headless with Streamlit's `AppTest`) are covered too. An end-to-end test runs the real models on a sample photo that ships with ultralytics.
+There are 410 tests. Each analyser is tested on synthetic landmarks with known geometry, including head pose sign conventions, PERCLOS windows and microsleep episodes. Seatbelt tests use synthetic straps painted onto real photos. The safety index, the weighting layers, the camera-obstruction, hands-on-wheel and low-light modules, the
+guided recorder and its label output, the forecast client (driven with canned responses, never the network), the alert patterns, the database and the dashboard (run headless with Streamlit's `AppTest`) are covered too. An end-to-end test runs the real models on a sample photo that ships with ultralytics.
 
 ## Demo guide
 
@@ -356,7 +390,8 @@ risk_engine/    Driver Safety Index, severity/confidence weights,
 renderers/      live window: overlays on the frame and the side panel
 database/       SQLite session storage and logger
 dashboard/      Streamlit analytics dashboard
-evaluation/     accuracy against hand-written ground truth
+evaluation/     guided recording, and accuracy against hand-written
+                ground truth
 utils/          alert sound, window sizing, low-light enhancement,
                 weather forecast client
 tests/          unit and end-to-end tests
