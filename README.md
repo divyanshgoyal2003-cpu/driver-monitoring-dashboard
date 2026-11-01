@@ -297,7 +297,7 @@ them. Leave both off and the app needs one model and runs at full speed.
 
 ### Checking it
 
-`docs/test.html` runs 127 checks in the browser, over synthetic landmarks,
+`docs/test.html` runs 131 checks in the browser, over synthetic landmarks,
 synthetic frames and a strap painted onto a canvas — the same properties the
 `unittest` suite asserts on the desktop, so the two implementations can be
 compared rather than merely trusted. Open it at
@@ -343,6 +343,33 @@ exactly why `weather_source` exists in the Python. The row now says
 which it is, and the service carries a status (`locating`, `fetching`,
 `ready`, `failed`) so a declined permission or a timed-out request says
 so in words instead of silently weighing nothing.
+
+### What the camera view draws
+
+The overlay used to be drawn from the landmarks the *measurements* need:
+the EAR wants six points per eye and the MAR four around the lips, so
+six and four were what appeared. That is fine for checking the maths and
+reads, correctly, as debug output. MediaPipe ships the real contours
+alongside the landmarks, so the picture can be the proper shape of an
+eye while nothing behind it changes.
+
+Colour now carries state and nothing else. Everything calm is one cool
+accent; red and amber appear only when a detector is actually saying
+something, so a glance at the video answers "is anything wrong" before
+any text is read. The previous overlay was bright green whenever things
+were **fine**, which spent the loudest colour available on the most
+common case.
+
+Looks must not cost function, so this was measured rather than assumed.
+The full 2,556-segment mesh costs **0.14 ms per frame** and the outline
+without it **0.02 ms**, against a 33 ms budget at 30 fps — every
+connection list is stroked as one path, which is what makes a mesh that
+size affordable at all. The button still cycles `mesh → outline → off`
+for a device that cannot spare even that, and the drawing lives in its
+own module (`docs/overlay.js`) that imports no detector and exports
+nothing any detector uses. A check asserts that last part, because the
+real risk in a rewrite like this is not an ugly frame — it is a drawing
+layer quietly becoming something the scoring depends on.
 
 ### Knowing who is driving
 

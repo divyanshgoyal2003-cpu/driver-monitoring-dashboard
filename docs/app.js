@@ -31,6 +31,7 @@ import {
 } from "./detectors.js";
 
 import { WeatherService, WEATHER_MULTIPLIERS } from "./weather.js";
+import * as overlay from "./overlay.js";
 import * as profiles from "./drivers.js";
 import { belongTo } from "./history.js";
 import { save as saveSession, load as loadSessions, clear as clearSessions }
@@ -112,7 +113,7 @@ let landmarker = null, hands = null, objects = null;
 let stream = null;
 let running = false;
 let updateWaiting = false;
-let showLandmarks = true;
+
 let lastVideoTime = -1;
 let frameIndex = 0;
 let frames = 0, fpsLast = 0, fps = 0;
@@ -270,107 +271,6 @@ function statistics(video) {
 // drawing
 // ----------------------------------------------------------------------
 
-const EYE_RING = [33, 160, 158, 133, 153, 144];
-const EYE_RING_R = [362, 385, 387, 263, 373, 380];
-const MOUTH_RING = [61, 13, 291, 14];
-
-function draw(pts, state, shownHands, shownPhones) {
-  const c = el.overlay;
-  const ctx = c.getContext("2d");
-
-  ctx.clearRect(0, 0, c.width, c.height);
-  if (!showLandmarks) return;
-
-  const style = getComputedStyle(document.documentElement);
-  const ok = style.getPropertyValue("--ok").trim() || "#41c464";
-  const bad = style.getPropertyValue("--bad").trim() || "#ff5f52";
-  const warn = style.getPropertyValue("--warn").trim() || "#e5a234";
-  const accent = style.getPropertyValue("--accent").trim() || "#4ea1ff";
-
-  const ring = (idx, colour, source) => {
-    ctx.beginPath();
-    idx.forEach((i, n) => {
-      const p = source[i];
-      n === 0 ? ctx.moveTo(p.x, p.y) : ctx.lineTo(p.x, p.y);
-    });
-    ctx.closePath();
-    ctx.strokeStyle = colour;
-    ctx.lineWidth = Math.max(2, c.width / 320);
-    ctx.stroke();
-  };
-
-  if (pts) {
-    const closed = state.blink?.eyes_closed;
-    const yawning = (state.yawn?.mar ?? 0) > CONFIG.MAR_THRESHOLD;
-    const offRoad = state.distraction && !state.distraction.eyes_on_road;
-
-    ring(EYE_RING, closed ? bad : ok, pts);
-    ring(EYE_RING_R, closed ? bad : ok, pts);
-    ring(MOUTH_RING, yawning ? warn : ok, pts);
-
-    // Where the head is pointing, as a line from the nose.
-    const nose = pts[1];
-    const len = c.width * 0.22;
-
-    ctx.beginPath();
-    ctx.moveTo(nose.x, nose.y);
-    ctx.lineTo(
-      nose.x + Math.sin((state.head_pose?.yaw ?? 0) * Math.PI / 180) * len,
-      nose.y + Math.sin((state.head_pose?.pitch ?? 0) * Math.PI / 180) * len
-    );
-    ctx.strokeStyle = offRoad ? bad : accent;
-    ctx.lineWidth = Math.max(2, c.width / 260);
-    ctx.stroke();
-  }
-
-  // The chest region whenever it was looked at, so an UNKNOWN seatbelt
-  // verdict is visibly about framing rather than about the belt -- and
-  // the strap itself when one was found.
-  const observation = state.seatbelt?.observation;
-
-  if (observation?.roi) {
-    const [x1, y1, x2, y2] = observation.roi;
-    ctx.strokeStyle = observation.belt_found ? ok : warn;
-    ctx.lineWidth = Math.max(1, c.width / 480);
-    ctx.setLineDash([6, 6]);
-    ctx.strokeRect(x1, y1, x2 - x1, y2 - y1);
-    ctx.setLineDash([]);
-  }
-
-  if (lastStrap) {
-    ctx.strokeStyle = ok;
-    ctx.lineWidth = Math.max(3, c.width / 200);
-    for (const [x1, y1, x2, y2] of lastStrap) {
-      ctx.beginPath();
-      ctx.moveTo(x1, y1);
-      ctx.lineTo(x2, y2);
-      ctx.stroke();
-    }
-  }
-
-  if (shownHands?.length) {
-    ctx.fillStyle = state.wheel?.hands_off ? bad : ok;
-    const radius = Math.max(3, c.width / 180);
-    for (const hand of shownHands) {
-      for (const p of hand) {
-        ctx.beginPath();
-        ctx.arc(p.x * c.width, p.y * c.height, radius, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    }
-  }
-
-  if (shownPhones?.length) {
-    ctx.strokeStyle = bad;
-    ctx.fillStyle = bad;
-    ctx.lineWidth = Math.max(2, c.width / 240);
-    ctx.font = `${Math.max(12, Math.round(c.width / 32))}px sans-serif`;
-    for (const box of shownPhones) {
-      ctx.strokeRect(box.originX, box.originY, box.width, box.height);
-      ctx.fillText("phone", box.originX, Math.max(14, box.originY - 6));
-    }
-  }
-}
 
 // ----------------------------------------------------------------------
 // screen
@@ -741,7 +641,9 @@ function tick() {
 
     accumulate(risk, t);
     alertFor(risk.alert, t);
-    draw(pts, state, hands ? handPoints : null, objects ? phoneBoxes : null);
+    overlay.draw(el.overlay, pts, state,
+                 hands ? handPoints : null, objects ? phoneBoxes : null,
+                 lastStrap, CONFIG.MAR_THRESHOLD);
     render(state, risk, t);
 
     // Rate limited inside the service, so calling it every frame only
@@ -1267,9 +1169,12 @@ el.recal.addEventListener("click", () => {
   headPose.startCalibration();
 });
 
+// Mesh first because it is the one that looks like something, off
+// last because the overlay is a demonstration aid and the score is
+// what actually matters.
 el.landmarks.addEventListener("click", () => {
-  showLandmarks = !showLandmarks;
-  el.landmarks.textContent = showLandmarks ? "Hide landmarks" : "Show landmarks";
+  overlay.cycle();
+  el.landmarks.textContent = overlay.label();
 });
 
 el.hour.addEventListener("change", () => {

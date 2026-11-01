@@ -39,6 +39,7 @@ import * as V from "./vision.js";
 import { interpret, WEATHER_MULTIPLIERS, WeatherService } from "./weather.js";
 import * as P from "./drivers.js";
 import { trim, belongTo, ownerOf } from "./history.js";
+import * as O from "./overlay.js";
 
 const out = [];
 let passed = 0, failed = 0;
@@ -899,6 +900,43 @@ ok("and each driver is capped on their own",
 
 ok("the trimmed log comes back newest first",
    trimmed.every((d, i) => i === 0 || trimmed[i - 1].at >= d.at));
+
+
+// ---- the overlay is decoration, and has to stay that way ----
+//
+// It got a rewrite because it looked like debug output. The risk in
+// that is not an ugly frame: it is a drawing layer quietly becoming
+// something a detector depends on, or a mesh that cannot be turned
+// off on a phone that cannot afford it.
+group("overlay");
+
+ok("the overlay only draws -- it exports nothing that decides",
+   typeof O.draw === "function" &&
+   Object.keys(O).every(k => ["draw", "cycle", "label", "mode"].includes(k)),
+   Object.keys(O).join(", "));
+
+const cycled = [O.mode()];
+for (let i = 0; i < 3; i++) cycled.push(O.cycle());
+ok("the button cycles mesh, outline, off and back round",
+   cycled.join(" ") === "mesh outline off mesh", cycled.join(" "));
+
+ok("and the label always matches the mode",
+   O.label().toLowerCase().includes(O.mode()), O.label());
+
+// draw() runs every frame, including the ones where the driver has
+// left the seat, so a missing face is an ordinary input and not an
+// edge case.
+const spare = document.createElement("canvas");
+spare.width = 320; spare.height = 240;
+
+let threw = null;
+try {
+  O.draw(spare, null, { face_detected: false }, null, null, null, 0.6);
+  O.draw(spare, null, {}, null, null, null, 0.6);
+  O.draw(spare, null, { seatbelt: { observation: { roi: [1, 1, 50, 50] } } },
+         null, null, [[0, 0, 10, 10]], 0.6);
+} catch (e) { threw = String(e); }
+ok("drawing a frame with no face does not throw", threw === null, threw ?? "");
 
 document.getElementById("out").innerHTML = out.join("\n");
 const tally = document.getElementById("tally");
