@@ -36,9 +36,12 @@ class DistractionDetector:
 
     def update(self, head_pose, gaze, timestamp):
 
-        if head_pose is None:
-            # No face. Nothing is reported while blind -- the driver
-            # cannot be called distracted on evidence nobody gathered.
+        if head_pose is None or not head_pose.get("reliable", True):
+            # No face, or a face the pose estimator will not vouch for
+            # because the mouth is open and it is no longer fitting a
+            # rigid head. Either way there is no usable reading, and
+            # nothing is reported -- the driver cannot be called
+            # distracted on evidence nobody gathered.
             #
             # But the clock is held rather than cleared. Losing the
             # face is not the driver looking back at the road; it is
@@ -50,10 +53,12 @@ class DistractionDetector:
             # recorded turn of nine seconds, two and a quarter were
             # lost to a face gap of two thirds of a second.
             #
-            # The hold is bounded: past DISTRACTION_FACE_GAP the face
-            # has been gone too long to assume anything about where it
-            # was pointing, and an absent driver is a separate
-            # condition with its own alert.
+            # The hold is bounded: past DISTRACTION_FACE_GAP there has
+            # been no usable reading for too long to assume anything
+            # about where the head was pointing, and an absent driver
+            # is a separate condition with its own alert. A yawn runs
+            # longer than that, so one does not preserve an episode
+            # across itself -- it only avoids inventing one.
             self.distracted_active = False
 
             if (self.last_seen is not None

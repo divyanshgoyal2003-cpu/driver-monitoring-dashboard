@@ -191,6 +191,15 @@ DISTRACTION_DURATION = 2.0
 # Nothing is claimed while the face is missing; only the clock is kept.
 DISTRACTION_FACE_GAP = 1.0
 
+# Above this mouth aspect ratio the head pose estimate stops being
+# trusted. solvePnP matches a rigid head to the landmarks, and a wide
+# open mouth is the face not being rigid: the chin, the mouth corners
+# and -- measured on a recording -- even the eye corners all move,
+# asymmetrically, and the solver has no way to tell that from the head
+# having turned. A measured yawn reaches 0.85 against a 0.02 resting
+# mouth, so this sits well above speech and well below a yawn's peak.
+HEAD_POSE_MAX_MAR = 0.45
+
 # Looking back at the road has to last this long to end an episode.
 # Entering a distraction already requires a sustained reading; leaving
 # one requires the same, because a head cannot swing fifty degrees and

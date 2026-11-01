@@ -2,7 +2,31 @@ import itertools
 import unittest
 
 from analytics.head_pose_estimator import HeadPoseEstimator
-from tests.fakes import WIDTH, HEIGHT, posed_face, shaped_face
+from tests.fakes import (
+    WIDTH,
+    HEIGHT,
+    RECORDED_DISTANCE,
+    open_mouth_face,
+    posed_face,
+    shaped_face,
+)
+
+
+def calibrated_on(estimator, face, seconds=4.0, fps=30.0):
+    """
+    Let the estimator learn its neutral pose from `face`, the way it
+    does from the first seconds of a drive, and return the reading it
+    settles on.
+    """
+
+    result = None
+    t = 0.0
+
+    for _ in range(int(seconds * fps)):
+        result = estimator.estimate([face], t)
+        t += 1 / fps
+
+    return result
 
 
 class HeadPoseEstimatorTest(unittest.TestCase):
@@ -205,13 +229,135 @@ class MirrorPoseTest(unittest.TestCase):
                 )
 
     def test_a_close_frontal_face_is_still_forward(self):
-        """The fix must not buy large angles at the cost of small ones."""
+        """
+        The fix must not buy large angles at the cost of small ones.
+
+        Yaw is checked raw, because nothing should bend it sideways.
+        Direction is checked after calibration, which is the only form
+        the system ever promises it in: fitting a generic head to a
+        particular one leaves a standing pitch offset of a few
+        degrees, and learning the driver's neutral pose is exactly how
+        that is removed.
+        """
 
         for seed in range(self.FACES):
-            result = self.estimator.estimate([shaped_face(yaw=0, seed=seed)])
+            face = shaped_face(yaw=0, seed=seed)
 
-            self.assertAlmostEqual(result["yaw"], 0.0, delta=2.0)
-            self.assertEqual(result["direction"], "FORWARD")
+            self.assertAlmostEqual(
+                self.estimator.estimate([face])["yaw"], 0.0, delta=2.0)
+
+            estimator = HeadPoseEstimator(WIDTH, HEIGHT)
+            result = calibrated_on(estimator, face)
+
+            self.assertEqual(result["direction"], "FORWARD", seed)
+
+    def test_the_standing_offset_is_inside_what_calibration_can_remove(self):
+        """
+        Calibration clamps what it will believe, so a bias beyond that
+        would survive it and tilt every later reading.
+        """
+
+        for seed in range(self.FACES):
+            estimator = HeadPoseEstimator(WIDTH, HEIGHT)
+            raw = estimator.estimate([shaped_face(yaw=0, seed=seed)])
+
+            self.assertLess(abs(raw["pitch"]), estimator.max_offset, seed)
+            self.assertLess(abs(raw["yaw"]), estimator.max_offset, seed)
+
+
+class OpenMouthTest(unittest.TestCase):
+    """
+    What a yawn does to a solver that assumes a rigid head.
+
+    It assumes one because solvePnP has to: it is handed a fixed 3D
+    model and asked which rotation of it best explains the landmarks.
+    A mouth opening breaks that assumption outright. Measured on a
+    recording in which the video shows the driver facing straight
+    ahead throughout, the reported yaw reached -28 degrees off its own
+    baseline and held there for over two seconds -- long enough to be
+    logged as a distraction that never happened.
+
+    Dropping the chin from the solve helps, because it is the single
+    largest displacement, but it is not a cure. Most of the residual
+    is the eye corners, which move asymmetrically too: holding the
+    left one still takes the measured yaw from -24.9 back to 0.8, and
+    no choice of model points can hold a landmark still. So the
+    estimator reports that it should not be believed, and the
+    detectors downstream treat that like a face they cannot see.
+    """
+
+    FACES = 15
+
+    def test_the_chin_is_not_solved_against(self):
+        """
+        It travels 121 pixels in a measured yawn, four times further
+        than anything else, with the longest lever arm in the model.
+        """
+
+        estimator = HeadPoseEstimator(WIDTH, HEIGHT)
+
+        self.assertNotIn(HeadPoseEstimator.CHIN,
+                         HeadPoseEstimator.LANDMARKS)
+
+        self.assertEqual(len(HeadPoseEstimator.LANDMARKS),
+                         len(estimator.model_points))
+
+    def test_a_closed_mouth_is_believed(self):
+        for seed in range(self.FACES):
+            estimator = HeadPoseEstimator(WIDTH, HEIGHT)
+            result = estimator.estimate(
+                [open_mouth_face(yaw=0, openness=0.0, seed=seed)])
+
+            self.assertTrue(result["reliable"], seed)
+
+    def test_a_yawn_is_not_believed(self):
+        for seed in range(self.FACES):
+            estimator = HeadPoseEstimator(WIDTH, HEIGHT)
+            result = estimator.estimate(
+                [open_mouth_face(yaw=0, openness=1.0, seed=seed)])
+
+            self.assertFalse(result["reliable"], seed)
+
+    def test_talking_is_still_believed(self):
+        """
+        A mouth moving in speech is nothing like one at full stretch,
+        and blinding the estimator through a conversation would cost
+        far more than it saved.
+        """
+
+        for seed in range(self.FACES):
+            estimator = HeadPoseEstimator(WIDTH, HEIGHT)
+            result = estimator.estimate(
+                [open_mouth_face(yaw=0, openness=0.25, seed=seed)])
+
+            self.assertTrue(result["reliable"], seed)
+
+    def test_a_turned_head_is_still_read_through_a_closed_mouth(self):
+        """The gate must key on the mouth, not on the angle."""
+
+        for seed in range(self.FACES):
+            estimator = HeadPoseEstimator(WIDTH, HEIGHT)
+            result = estimator.estimate(
+                [shaped_face(yaw=55, seed=seed, distance=RECORDED_DISTANCE)])
+
+            self.assertTrue(result["reliable"], seed)
+            self.assertGreater(result["yaw"], 0, seed)
+
+    def test_a_yawn_does_not_teach_a_crooked_neutral_pose(self):
+        """
+        Calibration takes the median of its samples, so a driver who
+        yawns through it would have the deformation baked into every
+        later reading.
+        """
+
+        estimator = HeadPoseEstimator(WIDTH, HEIGHT)
+        t = 0.0
+
+        for _ in range(120):
+            estimator.estimate([open_mouth_face(yaw=0, seed=2)], t)
+            t += 1 / 30
+
+        self.assertFalse(estimator.calibrated)
 
 
 if __name__ == "__main__":

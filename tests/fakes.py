@@ -87,12 +87,22 @@ def _rz(deg):
                      [0, 0, 1]])
 
 
+# Where the chin sits on the generic head. The estimator dropped it
+# from the solve because a jaw moves it, but the fakes still place it
+# so that movement can be simulated.
+CHIN_POINT = (0.0, -330.0, -65.0)
+
+
 def posed_face(yaw=0.0, pitch=0.0, roll=0.0, face=None, model=None,
                distance=3000.0):
     """
-    Face whose six head pose landmarks are the exact projection of the
+    Face whose head pose landmarks are the exact projection of the
     estimator's 3D model at the given angles (HeadPoseEstimator's sign
     convention). RQDecomp3x3 decomposes R = Rz(roll) Ry(yaw) Rx(pitch).
+
+    The chin is placed too, though the estimator no longer solves with
+    it, because a real face has one and open_mouth_face needs to be
+    able to move it.
 
     `model` projects a different 3D face than the one the estimator
     solves with, and `distance` moves it along the optical axis. The
@@ -110,8 +120,11 @@ def posed_face(yaw=0.0, pitch=0.0, roll=0.0, face=None, model=None,
     rvec, _ = cv2.Rodrigues(pnp_rotation)
     tvec = np.array([0.0, 0.0, distance])
 
+    solved = estimator.model_points if model is None else np.asarray(model)
+    projected = np.vstack([solved, [CHIN_POINT]])
+
     points, _ = cv2.projectPoints(
-        estimator.model_points if model is None else model,
+        projected,
         rvec,
         tvec,
         estimator.camera_matrix,
@@ -120,26 +133,57 @@ def posed_face(yaw=0.0, pitch=0.0, roll=0.0, face=None, model=None,
 
     face = face if face is not None else blank_face()
 
-    indices = [
-        HeadPoseEstimator.NOSE,
-        HeadPoseEstimator.CHIN,
-        HeadPoseEstimator.LEFT_EYE,
-        HeadPoseEstimator.RIGHT_EYE,
-        HeadPoseEstimator.LEFT_MOUTH,
-        HeadPoseEstimator.RIGHT_MOUTH
-    ]
+    indices = tuple(HeadPoseEstimator.LANDMARKS) + (HeadPoseEstimator.CHIN,)
 
     for index, (x, y) in zip(indices, points.reshape(-1, 2)):
         set_pixel(face, index, x, y)
 
+    place_lips(face, RESTING_MAR)
+
     return face
 
 
-# Roughly how far a driver's head sits from a cabin camera, in the
-# millimetres the 3D model is written in. Close enough that perspective
-# is doing real work, which is the regime the pose solver has to cope
-# with.
+# A closed mouth is not a perfectly shut one. Measured over a quiet
+# stretch of data/eval/take2.mp4; the peak of a yawn in the same clip
+# reaches YAWN_MAR.
+RESTING_MAR = 0.02
+YAWN_MAR = 0.85
+
+
+def place_lips(face, mar):
+    """
+    Put the lip centres between the mouth corners, opened to `mar`.
+
+    The pose estimator reads these to decide whether it is still
+    looking at a rigid face, so a posed face needs them even though
+    they are not solved against.
+    """
+
+    left = face[HeadPoseEstimator.LEFT_MOUTH]
+    right = face[HeadPoseEstimator.RIGHT_MOUTH]
+
+    cx = (left.x + right.x) / 2 * WIDTH
+    cy = (left.y + right.y) / 2 * HEIGHT
+    width = abs(right.x - left.x) * WIDTH
+
+    set_pixel(face, HeadPoseEstimator.MOUTH_TOP, cx, cy - mar * width / 2)
+    set_pixel(face, HeadPoseEstimator.MOUTH_BOTTOM, cx, cy + mar * width / 2)
+
+
+# A head filling the frame, as a camera mounted in a cabin sees it,
+# in the millimetres the 3D model is written in. Close enough that
+# perspective is doing real work, which is the regime the pose solver
+# has to cope with.
 DRIVER_DISTANCE = 700.0
+
+# The apparent size of the face in data/eval/take2.mp4, worked back
+# from its 131.5 pixels between the eye corners against the model's
+# 450mm. A laptop webcam at arm's length, so a far smaller face than
+# DRIVER_DISTANCE describes -- and the distance the yawn in
+# YAWN_TRAVEL was measured at. Those pixel figures only mean anything
+# at this scale: the same landmark travel at DRIVER_DISTANCE is a
+# fraction of a face instead of a sizeable part of one.
+RECORDED_DISTANCE = 4379.0
 
 
 def shaped_face(yaw=0.0, pitch=0.0, roll=0.0, variation=20.0, seed=0,
@@ -172,9 +216,8 @@ def shaped_face(yaw=0.0, pitch=0.0, roll=0.0, variation=20.0, seed=0,
     # each pair so the head stays symmetric.
     eye = (scale(), scale(), scale())
     mouth = (scale(), scale(), scale())
-    chin = (scale(), scale())
 
-    nose_p, chin_p, left_eye, right_eye, left_mouth, right_mouth = (
+    nose_p, left_eye, right_eye, left_mouth, right_mouth = (
         estimator.model_points
     )
 
@@ -184,7 +227,6 @@ def shaped_face(yaw=0.0, pitch=0.0, roll=0.0, variation=20.0, seed=0,
 
     model = np.array([
         list(nose_p),
-        [chin_p[0], chin_p[1] * chin[0], chin_p[2] * chin[1]],
         pair(left_eye, eye),
         pair(right_eye, eye),
         pair(left_mouth, mouth),
@@ -193,6 +235,62 @@ def shaped_face(yaw=0.0, pitch=0.0, roll=0.0, variation=20.0, seed=0,
 
     return posed_face(yaw=yaw, pitch=pitch, roll=roll, model=model,
                       distance=distance)
+
+
+# How far each pose landmark travels between a closed mouth and the
+# peak of a yawn, in pixels at RECORDED_DISTANCE. Measured off
+# data/eval/take2.mp4 rather than invented -- a frontal stretch
+# averaged against the peak of the first yawn, in a clip where the
+# video shows the head facing straight ahead throughout.
+#
+# Two things are worth reading off it. Almost nothing is symmetric:
+# the left eye corner travels 11.9 pixels while the right travels
+# -0.5, and that difference alone is most of the error -- holding the
+# left eye still takes the measured yaw from -24.9 back to 0.8. And
+# the whole face rises, because a yawn tips the head back.
+#
+# So this is not really "the jaw moves". It is the landmark mesh
+# deforming out of any rigid shape, which leaves solvePnP fitting a
+# head that does not exist. Dropping the chin does not cure that; it
+# removes the single largest displacement and brings what is left
+# inside the thresholds.
+YAWN_TRAVEL = {
+    HeadPoseEstimator.NOSE: (8.7, -38.8),
+    HeadPoseEstimator.CHIN: (9.6, -1.8),
+    HeadPoseEstimator.LEFT_EYE: (11.9, -18.3),
+    HeadPoseEstimator.RIGHT_EYE: (-0.5, -18.3),
+    HeadPoseEstimator.LEFT_MOUTH: (4.9, -20.1),
+    HeadPoseEstimator.RIGHT_MOUTH: (13.0, -21.2),
+}
+
+
+def open_mouth_face(yaw=0.0, pitch=0.0, roll=0.0, openness=1.0, seed=0,
+                    distance=RECORDED_DISTANCE):
+    """
+    A face mid-yawn: posed as usual, then deformed by YAWN_TRAVEL.
+
+    solvePnP matches a rigid head to these points and has no way to
+    tell a landmark that moved by itself from one that moved because
+    the head did, so the deformation comes back as rotation.
+
+    `openness` scales the travel: 1.0 is the full measured yawn, 0.0 a
+    closed mouth. `distance` defaults to the one the travel was
+    measured at, and changing it without rescaling the travel makes
+    the numbers mean something else.
+    """
+
+    face = shaped_face(yaw=yaw, pitch=pitch, roll=roll, seed=seed,
+                       distance=distance)
+
+    for index, (sideways, down) in YAWN_TRAVEL.items():
+        point = face[index]
+        set_pixel(face, index,
+                  point.x * WIDTH + sideways * openness,
+                  point.y * HEIGHT + down * openness)
+
+    place_lips(face, RESTING_MAR + (YAWN_MAR - RESTING_MAR) * openness)
+
+    return face
 
 
 def feed(detector, face, start, duration, fps=30.0):

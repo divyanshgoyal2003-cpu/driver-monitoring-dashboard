@@ -152,6 +152,59 @@ class FaceGapTest(unittest.TestCase):
         self.assertTrue(result["distracted"])
 
 
+class UnreliablePoseTest(unittest.TestCase):
+    """
+    A pose the estimator will not vouch for is not evidence.
+
+    It declines when the mouth is open, because solvePnP is fitting a
+    rigid head to a face that has stopped being one. On a recording,
+    a yawn with the driver facing straight ahead produced a reported
+    28 degrees of yaw and a logged distraction.
+    """
+
+    def setUp(self):
+        self.detector = DistractionDetector()
+
+    def unreliable(self, **angles):
+        state = pose(**angles)
+        state["reliable"] = False
+
+        return state
+
+    def test_a_yawn_does_not_become_a_distraction(self):
+        result, _ = hold(self.detector, self.unreliable(yaw=40), None,
+                         0.0, 3.0)
+
+        self.assertIsNone(result)
+        self.assertEqual(self.detector.distraction_count, 0)
+
+    def test_a_pose_without_the_flag_is_still_believed(self):
+        """Callers that predate the flag, and every existing test."""
+
+        result, _ = hold(self.detector, pose(yaw=40), None, 0.0, 2.5)
+
+        self.assertTrue(result["distracted"])
+
+    def test_a_brief_unreliable_patch_does_not_end_an_episode(self):
+        _, t = hold(self.detector, pose(yaw=40), None, 0.0, 1.5)
+        _, t = hold(self.detector, self.unreliable(yaw=40), None, t, 0.5)
+        result, _ = hold(self.detector, pose(yaw=40), None, t, 0.5)
+
+        self.assertTrue(result["distracted"])
+
+    def test_a_whole_yawn_outlasts_the_hold(self):
+        """
+        A yawn runs longer than the grace, so it cannot preserve an
+        episode across itself -- it only avoids inventing one.
+        """
+
+        _, t = hold(self.detector, pose(yaw=40), None, 0.0, 1.5)
+        _, t = hold(self.detector, self.unreliable(yaw=40), None, t, 2.0)
+        result, _ = hold(self.detector, pose(yaw=40), None, t, 1.0)
+
+        self.assertFalse(result["distracted"])
+
+
 class RecoveryTest(unittest.TestCase):
     """
     Ending an episode needs evidence too.
