@@ -10,7 +10,7 @@
  * the old one.
  */
 
-const CACHE = "driver-monitor-v6";
+const CACHE = "driver-monitor-v7";
 
 // The two optional models are NOT in here. They are opt-in, they are
 // 15 MB between them, and pre-caching them would hand that bill to
@@ -26,6 +26,7 @@ const SHELL = [
   "./vision.js",
   "./weather.js",
   "./history.js",
+  "./drivers.js",
   "./manifest.webmanifest",
   "./icon.svg",
   "./icon-maskable.svg",

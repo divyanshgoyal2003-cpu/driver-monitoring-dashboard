@@ -338,6 +338,48 @@ export class EarCalibrator {
     this.threshold = CONFIG.EAR_THRESHOLD;
     this.calibrated = false;
     this.confidence = 0.5;
+    this.restored = false;
+  }
+
+  /**
+   * The part of this worth keeping between drives: eye shape belongs
+   * to the driver, not to the session.
+   *
+   * Only a calibration that actually succeeded is offered. Confidence
+   * drops to 0.6 when the driver never blinked widely enough for the
+   * open and closed ends to separate, and in that case the threshold
+   * is still the default -- storing it would dress up a measurement
+   * that was never made, and restoring it next drive would skip the
+   * ten seconds that might have got a real one.
+   */
+  capture() {
+    if (!this.calibrated || this.confidence < 1.0) return null;
+    return { threshold: this.threshold, confidence: this.confidence,
+             at: Date.now() };
+  }
+
+  /**
+   * Start a drive already knowing this driver's threshold, which is
+   * ten seconds of every drive that no longer has to be spent
+   * measuring something that has not changed.
+   *
+   * A threshold outside the range the calibrator itself can produce is
+   * refused rather than clamped: a number from outside that range did
+   * not come from this calculation, and guessing at what it meant is
+   * worse than measuring again.
+   */
+  restore(saved) {
+    if (!saved || !Number.isFinite(saved.threshold)) return false;
+    if (saved.threshold < CONFIG.EAR_THRESHOLD_MIN ||
+        saved.threshold > CONFIG.EAR_THRESHOLD_MAX) return false;
+
+    this.samples = [];
+    this.started = null;
+    this.threshold = saved.threshold;
+    this.confidence = Number.isFinite(saved.confidence) ? saved.confidence : 1.0;
+    this.calibrated = true;
+    this.restored = true;
+    return true;
   }
 
   add(ear, t) {
@@ -395,7 +437,17 @@ export class BlinkDetector {
     this.threshold = CONFIG.EAR_THRESHOLD;
   }
 
+  /** Throws away a restored threshold too: the button means measure
+   *  again, and a driver pressing it has a reason. */
   recalibrate() { this.calibrator.reset(); }
+
+  capture() { return this.calibrator.capture(); }
+
+  restore(saved) {
+    const ok = this.calibrator.restore(saved);
+    if (ok) this.threshold = this.calibrator.threshold;
+    return ok;
+  }
 
   /** Returns null when there is no face -- the same contract the Python
    *  has, and the reason the evaluation harness once counted a face gap
@@ -452,7 +504,8 @@ export class BlinkDetector {
       microsleep_count: this.microsleepCount,
       blink_rate: this.blinkTimes.length,
       calibrated: this.calibrator.calibrated,
-      confidence: this.calibrator.confidence
+      confidence: this.calibrator.confidence,
+      restored: this.calibrator.restored
     };
   }
 }

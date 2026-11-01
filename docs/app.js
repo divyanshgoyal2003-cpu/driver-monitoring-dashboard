@@ -31,6 +31,8 @@ import {
 } from "./detectors.js";
 
 import { WeatherService, WEATHER_MULTIPLIERS } from "./weather.js";
+import * as profiles from "./drivers.js";
+import { belongTo } from "./history.js";
 import { save as saveSession, load as loadSessions, clear as clearSessions }
   from "./history.js";
 
@@ -62,8 +64,15 @@ const el = {
   landmarks: $("landmarks"), recal: $("recal"), stop: $("stop"),
   useHands: $("use-hands"), usePhone: $("use-phone"),
   report: $("report"), reportBody: $("report-body"), reportClose: $("report-close"),
-  history: $("history"), historyClear: $("history-clear")
+  history: $("history"), historyClear: $("history-clear"),
+  driver: $("driver"), driverAdd: $("driver-add"),
+  driverForget: $("driver-forget"), driverNote: $("driver-note")
 };
+
+// Who is driving, and what is known about them. Loaded once; every
+// change goes through here and is written straight back, so a profile
+// cannot exist on screen and not on disk.
+let drivers = profiles.load();
 
 const cells = {};
 for (const node of document.querySelectorAll(".cell")) {
@@ -895,6 +904,9 @@ function buildReport(t) {
 
   return {
     at: Date.now(),
+    // Who it was, so the log can be theirs. Null for a guest, which is
+    // also every drive recorded before profiles existed.
+    driverId: profiles.currentIn(drivers)?.id ?? null,
     duration: sessionStart === null ? 0 : t - sessionStart,
     lowest,
     blinks: blink.blinkCount,
@@ -941,11 +953,44 @@ function renderReport(report) {
   renderHistory();
 }
 
+/**
+ * The driver row, and the one line under it that says what knowing the
+ * driver has actually bought.
+ *
+ * Options are built with new Option rather than innerHTML because a
+ * driver's name is text someone typed, and the one place in this page
+ * where typed text meets markup is the one place worth not getting
+ * wrong.
+ */
+function renderDrivers() {
+  const current = profiles.currentIn(drivers);
+
+  el.driver.replaceChildren(new Option("Guest", ""));
+  for (const d of drivers.drivers) {
+    el.driver.appendChild(new Option(d.name, d.id));
+  }
+  el.driver.value = current ? current.id : "";
+
+  el.driverForget.disabled = !current;
+
+  const mine = belongTo(loadSessions(), current ? current.id : null).length;
+  const drives = `${mine} drive${mine === 1 ? "" : "s"}`;
+
+  el.driverNote.textContent = !current
+    ? `guest · ${drives} · nothing is kept`
+    : current.ear
+      ? `eye threshold ${current.ear.threshold.toFixed(3)} · ${drives}`
+      : `${drives} · eye threshold not learned yet`;
+}
+
 function renderHistory() {
-  const saved = loadSessions();
+  const current = profiles.currentIn(drivers);
+  const saved = belongTo(loadSessions(), current ? current.id : null);
 
   if (!saved.length) {
-    el.history.innerHTML = '<div class="none">no earlier drives stored</div>';
+    el.history.innerHTML = current
+      ? `<div class="none">no drives stored for this driver</div>`
+      : '<div class="none">no earlier drives stored</div>';
     return;
   }
 
@@ -1089,6 +1134,21 @@ async function start() {
   el.live.hidden = false;
   el.controls.hidden = false;
 
+  // Ten seconds of this drive that do not have to be spent measuring
+  // an eye shape that has not changed since the last one. The head
+  // pose offset is deliberately not restored with it -- see drivers.js
+  // for why a stored "straight ahead" is worse than no calibration.
+  const driver = profiles.currentIn(drivers);
+  if (driver?.ear && blink.restore(driver.ear)) {
+    // Added to the notice rather than written over it: a model that
+    // failed to load is the more important of the two messages, and
+    // this one must not be the reason it goes unread.
+    const said = el.notice.hidden ? "" : el.notice.textContent + " ";
+    el.notice.hidden = false;
+    el.notice.textContent =
+      `${said}${driver.name}: eye threshold restored. Still learning head position.`;
+  }
+
   // Coordinates are remembered after the first time, so on every drive
   // but the first this is silent and the forecast is simply there.
   fetchWeather();
@@ -1110,6 +1170,17 @@ function stop() {
   // A drive under ten seconds is a mis-click, not a session.
   if (report.duration >= 10) saveSession(report);
 
+  // Keep a calibration this drive measured for itself. A restored one
+  // is already stored and capture() returns it unchanged, so this
+  // neither loses it nor rewrites the date on it every drive.
+  const driver = profiles.currentIn(drivers);
+  const learned = blink.capture();
+  if (driver && learned && !driver.ear) {
+    drivers = profiles.calibrationIn(drivers, driver.id, learned);
+    profiles.save(drivers);
+  }
+
+  renderDrivers();
   renderReport(report);
 
   el.live.hidden = true;
@@ -1142,6 +1213,52 @@ el.reportClose.addEventListener("click", () => {
 
 el.historyClear.addEventListener("click", () => {
   clearSessions();
+  renderHistory();
+  renderDrivers();
+});
+
+el.driver.addEventListener("change", () => {
+  drivers = profiles.selectIn(drivers, el.driver.value || null);
+  profiles.save(drivers);
+  renderDrivers();
+  renderHistory();
+});
+
+el.driverAdd.addEventListener("click", () => {
+  const name = prompt("Who is driving?");
+  if (name === null) return;
+
+  const { state, driver, why } = profiles.addTo(drivers, name);
+  if (!driver) {
+    el.notice.hidden = false;
+    el.notice.textContent = why;
+    return;
+  }
+
+  drivers = state;
+  profiles.save(drivers);
+  el.notice.hidden = true;
+  renderDrivers();
+  renderHistory();
+});
+
+// Deleting someone's data should be the one thing here that asks
+// twice, and it has to say what actually goes: the profile and the
+// threshold, not the drives, which stay in the log under nobody.
+el.driverForget.addEventListener("click", () => {
+  const current = profiles.currentIn(drivers);
+  if (!current) return;
+
+  const ok = confirm(
+    `Forget ${current.name}?\n\n` +
+    "Their name and learned eye threshold are deleted from this device. " +
+    "Their recorded drives stay in the log.");
+
+  if (!ok) return;
+
+  drivers = profiles.removeFrom(drivers, current.id);
+  profiles.save(drivers);
+  renderDrivers();
   renderHistory();
 });
 
@@ -1205,6 +1322,7 @@ document.addEventListener("visibilitychange", async () => {
   }
 });
 
+renderDrivers();
 renderHistory();
 showWeather();
 

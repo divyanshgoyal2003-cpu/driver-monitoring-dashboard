@@ -308,7 +308,8 @@ button.ghost:hover { background: var(--panel); filter: none; }
 /* ---------- controls ---------- */
 
 .controls,
-.overrides {
+.overrides,
+.who {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
@@ -317,6 +318,11 @@ button.ghost:hover { background: var(--panel); filter: none; }
 
 .overrides {
   margin-top: -4px;
+}
+
+.who {
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
 }
 
 .controls label,

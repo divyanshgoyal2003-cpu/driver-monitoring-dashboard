@@ -37,6 +37,8 @@
 import * as D from "./detectors.js";
 import * as V from "./vision.js";
 import { interpret, WEATHER_MULTIPLIERS, WeatherService } from "./weather.js";
+import * as P from "./drivers.js";
+import { trim, belongTo, ownerOf } from "./history.js";
 
 const out = [];
 let passed = 0, failed = 0;
@@ -721,6 +723,182 @@ ok("and the alert carries it alongside the banner text",
    loud.alert.spoken === D.SPOKEN.microsleep &&
    loud.alert.spoken !== loud.alert.message,
    `says "${loud.alert.spoken}", shows "${loud.alert.message}"`);
+
+
+// ---- driver profiles ----
+//
+// Every one of these runs on a state object passed in by hand. The
+// store's own load() and save() touch the same localStorage a real
+// driver's profiles live in, and a test suite that wipes those would
+// be a worse bug than anything it caught.
+group("driver profiles");
+
+const blank = P.empty();
+ok("an empty store has nobody in it and nobody selected",
+   blank.drivers.length === 0 && blank.currentId === null);
+
+const one = P.addTo(blank, "Divyansh");
+ok("adding a driver returns them and selects them",
+   one.driver !== null && one.state.drivers.length === 1 &&
+   one.state.currentId === one.driver.id);
+
+ok("and the original state is untouched",
+   blank.drivers.length === 0);
+
+ok("a blank name is refused rather than stored",
+   P.addTo(blank, "   ").driver === null);
+
+ok("and so is the same name in different case",
+   P.addTo(one.state, "divyansh").driver === null,
+   P.addTo(one.state, "divyansh").why);
+
+let many = P.empty();
+for (let i = 0; i < P.LIMITS.MAX_DRIVERS + 3; i++) {
+  many = P.addTo(many, `driver ${i}`).state;
+}
+ok(`the list stops at ${P.LIMITS.MAX_DRIVERS}`,
+   many.drivers.length === P.LIMITS.MAX_DRIVERS);
+
+const two = P.addTo(one.state, "Utkarsh");
+ok("two drivers get different ids",
+   two.state.drivers[0].id !== two.state.drivers[1].id);
+
+const gone = P.removeFrom(two.state, two.driver.id);
+ok("forgetting the selected driver falls back to guest",
+   gone.drivers.length === 1 && gone.currentId === null);
+
+ok("selecting an id that is not there is guest, not a crash",
+   P.selectIn(two.state, "nope").currentId === null);
+
+// ---- what a profile is allowed to remember ----
+group("stored calibration");
+
+const withEar = P.calibrationIn(one.state, one.driver.id,
+                                { threshold: 0.21, confidence: 1.0 });
+ok("a calibration is written onto the right driver",
+   P.currentIn(withEar).ear.threshold === 0.21);
+
+ok("a threshold outside the possible range is refused, not clamped",
+   P.validEar({ threshold: 4.0 }) === null &&
+   P.validEar({ threshold: -1 }) === null);
+
+ok("and so is a missing one",
+   P.validEar({ confidence: 1.0 }) === null && P.validEar(null) === null);
+
+// Corruption, a half-written profile, or something a future version of
+// this page wrote. None of it should cost more than the bad row.
+const messy = P.validate({
+  drivers: [
+    { id: "a", name: "Real" },
+    { id: "b" },
+    null,
+    { name: "no id" },
+    { id: "a", name: "Duplicate id" },
+    { id: "c", name: "  Spaces  ", ear: { threshold: 99 } }
+  ],
+  currentId: "zzz"
+});
+ok("a store half full of rubbish keeps exactly the usable rows",
+   messy.drivers.length === 2 &&
+   messy.drivers.map(d => d.name).join(",") === "Real,Spaces",
+   messy.drivers.map(d => d.name).join(" | "));
+
+ok("and a selected id that no longer exists becomes guest",
+   messy.currentId === null);
+
+ok("an impossible stored threshold is dropped, the driver is not",
+   messy.drivers[1].ear === null);
+
+ok("validate survives being handed nonsense",
+   P.validate(null).drivers.length === 0 &&
+   P.validate("hello").drivers.length === 0 &&
+   P.validate({ drivers: "no" }).drivers.length === 0);
+
+// ---- the calibrator's own half of it ----
+group("restoring a threshold");
+
+const cal = new D.EarCalibrator();
+ok("a fresh calibrator offers nothing to store",
+   cal.capture() === null);
+
+// Drive it through a real calibration: ten seconds of open eyes with
+// blinks in them, which is the only input that earns confidence 1.0.
+for (let i = 0; i <= 120; i++) {
+  cal.add(i % 10 === 0 ? 0.10 : 0.30, i * 0.1);
+}
+ok("a completed calibration offers a threshold and full confidence",
+   cal.capture() !== null && cal.capture().confidence === 1.0,
+   `threshold ${cal.threshold.toFixed(3)}`);
+
+const sameEyes = new D.EarCalibrator();
+ok("restoring it skips the wait entirely",
+   sameEyes.restore(cal.capture()) === true &&
+   sameEyes.calibrated === true && sameEyes.restored === true &&
+   sameEyes.threshold === cal.threshold);
+
+const refused = new D.EarCalibrator();
+ok("a threshold from outside the calibrator's own range is refused",
+   refused.restore({ threshold: 0.9 }) === false &&
+   refused.calibrated === false);
+
+// A driver who never blinked while being watched gets confidence 0.6
+// and the default threshold, which is not a measurement and must not
+// be stored as one -- storing it would skip next drive's chance of a
+// real reading.
+const noBlinks = new D.EarCalibrator();
+for (let i = 0; i <= 120; i++) noBlinks.add(0.30, i * 0.1);
+ok("a calibration that never saw a blink is not offered for storage",
+   noBlinks.calibrated === true && noBlinks.confidence === 0.6 &&
+   noBlinks.capture() === null);
+
+const redo = new D.BlinkDetector();
+redo.restore({ threshold: 0.19, confidence: 1.0 });
+redo.recalibrate();
+ok("recalibrating throws a restored threshold away",
+   redo.calibrator.calibrated === false && redo.calibrator.restored === false);
+
+// ---- the log belongs to someone ----
+group("history per driver");
+
+const log = [
+  { at: 500, driverId: "a" },
+  { at: 400, driverId: "b" },
+  { at: 300 },
+  { at: 200, driverId: "a" },
+  { at: 100, driverId: null }
+];
+
+ok("a driver's drives are only theirs",
+   belongTo(log, "a").length === 2 &&
+   belongTo(log, "a").every(d => d.driverId === "a"));
+
+// This is the migration. Every drive recorded before profiles existed
+// has no driverId at all, and it has to stay readable rather than
+// being orphaned by the feature that arrived after it.
+ok("drives from before profiles existed show up under guest",
+   belongTo(log, null).length === 2,
+   "one with no field, one with an explicit null");
+
+ok("owner is null for both ways of having no driver",
+   ownerOf({ at: 1 }) === null && ownerOf({ at: 1, driverId: null }) === null &&
+   ownerOf({ at: 1, driverId: "" }) === null);
+
+// One person driving daily must not be able to delete another's whole
+// history simply by driving more often than them.
+const busy = [];
+for (let i = 0; i < 40; i++) busy.push({ at: 10000 + i, driverId: "daily" });
+busy.push({ at: 1, driverId: "weekly" });
+
+const trimmed = trim(busy);
+ok("a heavy user's drives cannot push out a light user's",
+   belongTo(trimmed, "weekly").length === 1,
+   `${belongTo(trimmed, "daily").length} kept for the daily driver`);
+
+ok("and each driver is capped on their own",
+   belongTo(trimmed, "daily").length === 20);
+
+ok("the trimmed log comes back newest first",
+   trimmed.every((d, i) => i === 0 || trimmed[i - 1].at >= d.at));
 
 document.getElementById("out").innerHTML = out.join("\n");
 const tally = document.getElementById("tally");

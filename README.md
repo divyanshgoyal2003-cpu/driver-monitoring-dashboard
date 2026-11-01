@@ -24,6 +24,7 @@ A single camera feed is analysed by several models at once. Their outputs are co
 | Driver Safety Index | Each active risk takes points off 100. The result maps to SAFE (≥ 75), CAUTION (≥ 50) or DANGER, with alerts and events. What a risk costs is not fixed — see [dynamic weighting](#dynamic-risk-weighting). |
 | Analytics Dashboard | Each session is saved to SQLite and explored in a Streamlit dashboard. |
 | Installable Web App | The whole system, ported to run on a phone with nothing to install and nothing uploaded — see [on a phone](#on-a-phone). |
+| Driver Profiles | Named drivers on the device, each keeping their own learned eye threshold and drive log — see [knowing who is driving](#knowing-who-is-driving). |
 
 ## How it fits together
 
@@ -296,7 +297,7 @@ them. Leave both off and the app needs one model and runs at full speed.
 
 ### Checking it
 
-`docs/test.html` runs 99 checks in the browser, over synthetic landmarks,
+`docs/test.html` runs 127 checks in the browser, over synthetic landmarks,
 synthetic frames and a strap painted onto a canvas — the same properties the
 `unittest` suite asserts on the desktop, so the two implementations can be
 compared rather than merely trusted. Open it at
@@ -342,6 +343,60 @@ exactly why `weather_source` exists in the Python. The row now says
 which it is, and the service carries a status (`locating`, `fetching`,
 `ready`, `failed`) so a declined permission or a timed-out request says
 so in words instead of silently weighing nothing.
+
+### Knowing who is driving
+
+A driver can be named before a drive, and the app keeps two things
+against that name: the eye threshold it learned for them, and their own
+drive log.
+
+This is **not a login**, and the distinction matters more than it might
+look. There is no server behind these files, so a password here would
+live in `localStorage` and be bypassed from the console in one line —
+authentication the code cannot actually perform. What a driver monitor
+genuinely needs from identity is narrower: somewhere for the things that
+belong to a person, rather than to a session, to live. Guest is a real
+option rather than a locked door, and nothing is kept for it.
+
+The eye threshold is the part worth keeping. Eye shape varies enough
+between people that one driver's open eye sits below another's blink
+threshold and reads as permanently shut, so the threshold is learned per
+driver over the first **ten seconds** of a drive. Learning it once and
+restoring it afterwards is ten seconds of every subsequent drive spent
+monitoring instead of measuring. Only a calibration that actually
+succeeded is stored: if the driver never blinked widely enough for the
+open and closed ends to separate, confidence stays at 0.6 and the
+default threshold is kept, and storing *that* would dress up a
+measurement that was never made.
+
+The head pose offset is deliberately **not** kept, and the asymmetry is
+the whole design. "Straight ahead" is not a property of the driver; it
+is a property of where the phone is clamped today. Restoring yesterday's
+offset onto a mount that has moved would teach the system that sideways
+is forward and then score every glance at the road as a distraction — a
+stored calibration actively worse than none at all. It costs three
+seconds to measure, so it is measured, every drive. The notice says
+which of the two happened:
+
+```
+Divyansh: eye threshold restored. Still learning head position.
+```
+
+The drive log is per driver, capped per driver as well as overall, so a
+shared phone where one person drives daily and another weekly cannot
+quietly delete the second person's history to make room. Drives recorded
+before profiles existed have no driver at all, and appear under Guest
+rather than being orphaned by the feature that arrived after them.
+Forgetting a driver deletes their name and threshold and says so; their
+drives stay in the log under nobody.
+
+Face enrolment would be the obvious next step and is deliberately not
+here. `FaceLandmarker` returns geometry, not identity — there is no
+recognition embedding in it — so it would mean either a hand-rolled
+signature from landmark ratios, which separates a few people in good
+light and is not face recognition, or another runtime and several more
+megabytes, which is exactly what FER+ was rejected for. The storage and
+the UI this feature adds are where it would attach.
 
 ### Taking an update
 
