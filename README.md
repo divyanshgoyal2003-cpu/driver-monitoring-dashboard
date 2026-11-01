@@ -283,11 +283,14 @@ Writing ground truth by hand means scrubbing a video with a notepad, guessing at
 python -m evaluation.record_session --video drive.mp4 --labels drive.csv
 ```
 
+**The cues are spoken as well as drawn.** Half the script asks you to stop watching the screen -- eyes closed, head turned away, a palm over the lens -- and during those a countdown in the corner may as well not be there. Windows can speak without any package installed, so a long-lived PowerShell speaks each cue, warns "three, two, one" before the change, and a chime marks it. If speech cannot start, or dies partway, the recording carries on silently rather than taking the session down; `--no-voice` turns it off.
+
 It prompts you through about two minutes of cues — look away, hold a phone up, close your eyes, drop your hands, cover the lens — and writes the label file from the same schedule it drove. Recording and labelling become one pass.
 
 **The labels say what you were asked to do, not what you did.** Nobody times a yawn to the frame, cues get missed, and a hand wanders back into shot early. So treat the CSV as a first draft to correct against the video, which is what the comment at the top of it says. Two things it deliberately will not do:
 
 - **The cue is never burned into the recording.** It is drawn on the preview window only, because text painted onto the frame would change the brightness and variance the obstruction and low-light detectors read — the recording would no longer be the thing being measured.
+- **Cover the lens with your hand, not the privacy switch.** A laptop's camera key or shutter makes the capture software substitute a graphic -- on Windows, a white camera-with-a-slash on black. That has a standard deviation of about 43 against the 8 the detector requires, so it reads as a picture, not as a covered lens. The detector is right to refuse it; the test is simply not the one you meant to run.
 - **It does not label blinks or yawns.** Those are point events a tenth of a second long, and a cue card cannot place them.
 
 The cues are long on purpose. Every episode detector waits before it commits, so a four-second cue would be mostly dwell time and would score as a miss for reasons that have nothing to do with accuracy. Even at eight seconds the dwell is visible: a `camera_blocked` episode held for 8 s scores 100% precision and 75% recall, and that missing quarter is exactly the 2 s the detector spends making sure. Read recall on short episodes with that in mind.
@@ -318,7 +321,7 @@ The same pass also runs **both** scoring engines over the identical frames and c
 python -m unittest discover -s tests -t .
 ```
 
-There are 410 tests. Each analyser is tested on synthetic landmarks with known geometry, including head pose sign conventions, PERCLOS windows and microsleep episodes. Seatbelt tests use synthetic straps painted onto real photos. The safety index, the weighting layers, the camera-obstruction, hands-on-wheel and low-light modules, the
+There are 420 tests. Each analyser is tested on synthetic landmarks with known geometry, including head pose sign conventions, PERCLOS windows and microsleep episodes. Seatbelt tests use synthetic straps painted onto real photos. The safety index, the weighting layers, the camera-obstruction, hands-on-wheel and low-light modules, the
 guided recorder and its label output, the forecast client (driven with canned responses, never the network), the alert patterns, the database and the dashboard (run headless with Streamlit's `AppTest`) are covered too. An end-to-end test runs the real models on a sample photo that ships with ultralytics.
 
 ## Demo guide

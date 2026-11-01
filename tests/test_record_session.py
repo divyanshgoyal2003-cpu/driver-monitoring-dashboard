@@ -14,9 +14,12 @@ import unittest
 from evaluation import labels as labels_module
 from evaluation.labels import parse
 from evaluation.record_session import (
+    COUNTDOWN_AT,
     SCRIPT,
     Step,
+    Voice,
     build_labels,
+    chime,
     covered_labels,
     format_labels,
     total_seconds,
@@ -101,6 +104,113 @@ class ScriptTest(unittest.TestCase):
 
         self.assertGreater(total_seconds(), 60)
         self.assertLess(total_seconds(), 240)
+
+
+class SpokenCueTest(unittest.TestCase):
+    """
+    The cues have to work with the screen unwatched.
+    """
+
+    def test_every_step_has_something_to_say(self):
+        for step in SCRIPT:
+            self.assertTrue(step.spoken.strip(), step.cue)
+
+    def test_spoken_falls_back_to_the_written_cue(self):
+        self.assertEqual(Step(2.0, "look ahead").spoken, "look ahead")
+
+    def test_the_cues_that_matter_say_more_out_loud(self):
+        """
+        "Drop both hands" is ambiguous until you add "out of shot",
+        and the banner has no room for it.
+        """
+
+        spoken = {step.label: step.spoken for step in SCRIPT if step.label}
+
+        self.assertIn("out of the picture", spoken["hands_off"])
+        self.assertIn("not the camera switch", spoken["camera_blocked"])
+
+    def test_the_eyes_closed_cue_promises_to_say_when_to_stop(self):
+        """
+        Otherwise the only way to know is to open them and look.
+        """
+
+        spoken = next(s.spoken for s in SCRIPT if s.label == "microsleep")
+
+        self.assertIn("until I tell you", spoken)
+
+    def test_only_steps_with_room_get_a_countdown(self):
+        """
+        A countdown has to finish before the cue it is counting down
+        to, and the spoken cue has to finish before the countdown.
+        """
+
+        for step in SCRIPT:
+            if step.seconds > COUNTDOWN_AT + 3.0:
+                self.assertGreaterEqual(step.seconds - COUNTDOWN_AT, 6.0,
+                                        step.cue)
+
+
+class VoiceTest(unittest.TestCase):
+    """
+    Speech is a convenience, never a dependency. Every failure here
+    has to end in silence rather than in a lost recording.
+    """
+
+    def test_disabled_is_not_available(self):
+        voice = Voice(enabled=False)
+
+        self.assertFalse(voice.available)
+        self.assertEqual(voice.reason, "turned off")
+
+    def test_speaking_when_disabled_does_nothing(self):
+        voice = Voice(enabled=False)
+
+        voice.say("hello")
+        voice.close()
+
+    def test_a_dead_process_does_not_raise(self):
+        class Dead:
+            stdin = None
+
+            def poll(self):
+                return 1
+
+        voice = Voice(enabled=False)
+        voice.process = Dead()
+
+        self.assertFalse(voice.available)
+        voice.say("hello")
+
+    def test_a_broken_pipe_stops_speech_rather_than_the_session(self):
+        class Broken:
+            class stdin:
+                @staticmethod
+                def write(text):
+                    raise OSError("pipe closed")
+
+                @staticmethod
+                def flush():
+                    pass
+
+                @staticmethod
+                def close():
+                    pass
+
+            def poll(self):
+                return None
+
+        voice = Voice(enabled=False)
+        voice.process = Broken()
+
+        voice.say("hello")
+
+        self.assertFalse(voice.available)
+        self.assertIn("stopped", voice.reason)
+
+    def test_a_chime_never_raises(self):
+        """It runs on a thread precisely so it cannot stall capture."""
+
+        chime()
 
 
 class LabelBuildingTest(unittest.TestCase):

@@ -36,7 +36,9 @@ Two things it deliberately does not do:
 
 import argparse
 import os
+import subprocess
 import sys
+import threading
 import time
 
 import cv2
@@ -47,12 +49,21 @@ from app.config import CAMERA_INDEX, FRAME_WIDTH, FRAME_HEIGHT
 class Step:
     """One cue: how long to hold it, what to say, what it means."""
 
-    def __init__(self, seconds, cue, label=None, note=""):
+    def __init__(self, seconds, cue, label=None, spoken=None, note=""):
 
         self.seconds = seconds
         self.cue = cue
         self.label = label
         self.note = note
+
+        # The written cue is cut to fit a banner. Spoken aloud it can
+        # afford to be a full sentence, and some of them need to be:
+        # "drop your hands" is ambiguous until you add "out of shot".
+        self._spoken = spoken
+
+    @property
+    def spoken(self):
+        return self._spoken or self.cue
 
 
 # The cues are long on purpose. Every episode detector waits before it
@@ -61,32 +72,55 @@ class Step:
 # dwell time and would score as a miss for reasons that have nothing to
 # do with accuracy.
 SCRIPT = (
-    Step(8.0, "Sit still. Look straight ahead.",
+    Step(10.0, "Sit still. Look straight at the camera.",
+         spoken="Recording. Sit still and look straight at the camera.",
          note="calibration - the head pose baseline is learned here"),
     Step(10.0, "Keep looking ahead. Blink normally.",
+         spoken="Keep looking ahead, and blink normally.",
          note="a quiet stretch, so false positives have room to show"),
 
-    Step(8.0, "Turn your head right, away from the camera.", "distracted"),
-    Step(6.0, "Look straight ahead again."),
+    Step(10.0, "Turn your head right, away from the camera.", "distracted",
+         spoken="Now turn your head to the right, away from the camera, "
+                "and hold it there."),
+    Step(6.0, "Look straight ahead again.",
+         spoken="Look straight ahead again."),
 
-    Step(8.0, "Hold a phone up beside your face.", "phone"),
-    Step(6.0, "Put the phone down. Look ahead."),
+    Step(10.0, "Hold a phone up beside your face.", "phone",
+         spoken="Hold a phone up beside your face, and keep it in shot."),
+    Step(6.0, "Put the phone down. Look ahead.",
+         spoken="Put the phone down, and look ahead."),
 
-    Step(10.0, "Yawn twice, slowly and wide.",
+    Step(12.0, "Yawn twice, slowly and wide.",
+         spoken="Yawn twice, slowly and wide. Close your mouth fully in "
+                "between them.",
          note="not labelled - a yawn is too short for a cue to place"),
 
-    Step(8.0, "Close your eyes. Keep them closed.", "microsleep"),
-    Step(6.0, "Open your eyes. Look ahead."),
+    Step(10.0, "Close your eyes. Keep them closed.", "microsleep",
+         spoken="Close your eyes now, and keep them closed until I tell "
+                "you to open them."),
+    Step(6.0, "Open your eyes. Look ahead.",
+         spoken="Open your eyes, and look ahead."),
 
     Step(12.0, "Hold both hands up where the camera can see them.",
+         spoken="Hold both hands up, palms towards the camera, where it "
+                "can see them.",
          note="the wheel monitor needs this before absence means "
               "anything"),
-    Step(8.0, "Drop both hands out of shot.", "hands_off"),
-    Step(6.0, "Hands back up where they can be seen."),
+    Step(10.0, "Drop both hands out of shot.", "hands_off",
+         spoken="Drop both hands right down, out of the picture."),
+    Step(6.0, "Hands back up where they can be seen.",
+         spoken="Hands back up where the camera can see them."),
 
-    Step(8.0, "Cover the lens with your palm.", "camera_blocked"),
-    Step(5.0, "Uncover the lens. Look ahead."),
+    Step(10.0, "Cover the lens with your palm.", "camera_blocked",
+         spoken="Cover the lens with your palm. Use your hand, not the "
+                "camera switch or the shutter."),
+    Step(6.0, "Take your hand off the lens. Look ahead.",
+         spoken="Take your hand off the lens, and look ahead."),
 )
+
+# Spoken this long before a cue ends, so somebody with their eyes shut
+# knows the change is coming rather than being startled by it.
+COUNTDOWN_AT = 3.5
 
 # How many frames to sample before opening the writer. A webcam's rate
 # settles after it has woken up, and the file's frame rate has to match
@@ -101,6 +135,108 @@ BANNER = (0, 0, 0)
 TEXT = (255, 255, 255)
 COUNTDOWN = (120, 220, 255)
 FONT = cv2.FONT_HERSHEY_SIMPLEX
+
+
+# One long-lived PowerShell reading cues off its stdin. Speaking
+# through a fresh process per cue costs half a second of startup, which
+# is enough to drift the cue past the moment it is describing.
+SPEECH = (
+    "Add-Type -AssemblyName System.Speech; "
+    "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
+    "$s.Rate = 1; "
+    "while (($line = [Console]::In.ReadLine()) -ne $null) { "
+    "if ($line.Length -gt 0) { $s.Speak($line) } }"
+)
+
+
+class Voice:
+    """
+    Spoken cues, because a cue you cannot look at is not a cue.
+
+    Half the script asks the driver to stop watching the screen -- eyes
+    closed, head turned away, a palm over the lens -- and during those
+    the countdown in the corner may as well not be there. Windows can
+    speak without any package being installed, so it does.
+
+    Silence is always an acceptable outcome. If speech cannot start, or
+    dies partway, the recording carries on without it rather than
+    taking the session down.
+    """
+
+    def __init__(self, enabled=True):
+
+        self.process = None
+        self.reason = None
+
+        if not enabled:
+            self.reason = "turned off"
+            return
+
+        try:
+            self.process = subprocess.Popen(
+                ["powershell", "-NoProfile", "-ExecutionPolicy", "Bypass",
+                 "-Command", SPEECH],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                text=True,
+            )
+        except OSError as error:
+            self.reason = f"could not start PowerShell ({error})"
+
+    @property
+    def available(self):
+        return self.process is not None and self.process.poll() is None
+
+    def say(self, text):
+
+        if not self.available:
+            return
+
+        try:
+            self.process.stdin.write(text + "\n")
+            self.process.stdin.flush()
+        except (OSError, ValueError):
+            # It went away mid-session. Carry on quietly.
+            self.process = None
+            self.reason = "speech stopped partway"
+
+    def close(self):
+
+        if self.process is None:
+            return
+
+        try:
+            self.process.stdin.close()
+        except (OSError, ValueError):
+            pass
+
+        try:
+            self.process.wait(timeout=2)
+        except subprocess.TimeoutExpired:
+            self.process.kill()
+
+        self.process = None
+
+
+def chime(frequency=880, milliseconds=120):
+    """
+    A marker at each change of cue, on a thread.
+
+    winsound.Beep blocks for its whole duration, and blocking the
+    capture loop drops frames -- which would bend the timestamps the
+    labels are built from.
+    """
+
+    def play():
+        try:
+            import winsound
+
+            winsound.Beep(frequency, milliseconds)
+        except Exception:
+            pass
+
+    threading.Thread(target=play, daemon=True).start()
 
 
 def covered_labels(script=SCRIPT):
@@ -245,7 +381,7 @@ def draw_cue(frame, step, remaining, elapsed, total):
 
 
 def record(video_path, source=CAMERA_INDEX, width=FRAME_WIDTH,
-           height=FRAME_HEIGHT, script=SCRIPT, preview=True):
+           height=FRAME_HEIGHT, script=SCRIPT, preview=True, voice=None):
     """
     Run the script, writing clean frames to `video_path`.
 
@@ -290,12 +426,27 @@ def record(video_path, source=CAMERA_INDEX, width=FRAME_WIDTH,
             boundaries.append(frames)
             step_started = time.perf_counter()
 
+            chime()
+
+            if voice is not None:
+                voice.say(step.spoken)
+
+            counted = False
+
             while True:
                 now = time.perf_counter()
                 remaining = step.seconds - (now - step_started)
 
                 if remaining <= 0:
                     break
+
+                # Long enough for a warning to be worth giving, and
+                # for it to finish before the cue changes.
+                if (voice is not None and not counted
+                        and step.seconds > COUNTDOWN_AT + 3.0
+                        and remaining <= COUNTDOWN_AT):
+                    voice.say("three, two, one")
+                    counted = True
 
                 success, frame = capture.read()
 
@@ -350,9 +501,13 @@ def parse_args(argv=None):
     parser.add_argument("--source", default=CAMERA_INDEX,
                         help="camera index (default 0)")
     parser.add_argument("--no-preview", action="store_true",
-                        help="do not open a window. The cues are then "
-                             "invisible, which is only useful for "
-                             "testing the plumbing")
+                        help="do not open a window. With --no-voice too "
+                             "the cues are invisible, which is only "
+                             "useful for testing the plumbing")
+    parser.add_argument("--no-voice", action="store_true",
+                        help="do not speak the cues. Half the script "
+                             "asks you to stop watching the screen, so "
+                             "this is worth keeping on")
 
     args = parser.parse_args(argv)
 
@@ -376,17 +531,28 @@ def main(argv=None):
         if folder:
             os.makedirs(folder, exist_ok=True)
 
+    voice = Voice(enabled=not args.no_voice)
+
     print(f"Recording {total_seconds():.0f}s to {args.video}")
     print("Follow the cue at the bottom of the window. Q stops early.")
+
+    if voice.available:
+        print("Cues are spoken, so you can close your eyes and look away.")
+    elif not args.no_voice:
+        print(f"No spoken cues ({voice.reason}); watch the window.")
+
     print()
 
     try:
         boundaries, fps, frames, complete, achieved = record(
-            args.video, source=args.source, preview=not args.no_preview
+            args.video, source=args.source, preview=not args.no_preview,
+            voice=voice
         )
     except RuntimeError as error:
         print(error, file=sys.stderr)
         return 1
+    finally:
+        voice.close()
 
     if not frames:
         print("Nothing was recorded.", file=sys.stderr)
