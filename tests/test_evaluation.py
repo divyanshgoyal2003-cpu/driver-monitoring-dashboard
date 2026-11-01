@@ -343,26 +343,31 @@ class SpansTest(unittest.TestCase):
         self.assertEqual(spans_from_flags([0.0, 1.0], [False, False]), [])
 
 
+def frame_state(blinks=0, distracted=False, phone=False):
+    return {
+        "blink": {"blink_count": blinks},
+        "yawn": {"yawn_count": 0},
+        "drowsiness": {"microsleep": False},
+        "distraction": {"distracted": distracted},
+        "phone": {"in_use": phone},
+        "seatbelt": {"status": "ON"},
+    }
+
+
+def recorded(frames):
+    recording = Recording()
+
+    for i, state in enumerate(frames):
+        risk = {"score": 100.0}
+        recording.add(state, float(i), risk, risk)
+
+    return recording
+
+
 class RecordingTest(unittest.TestCase):
 
-    def state(self, blinks=0, distracted=False, phone=False):
-        return {
-            "blink": {"blink_count": blinks},
-            "yawn": {"yawn_count": 0},
-            "drowsiness": {"microsleep": False},
-            "distraction": {"distracted": distracted},
-            "phone": {"in_use": phone},
-            "seatbelt": {"status": "ON"},
-        }
-
-    def record(self, frames):
-        recording = Recording()
-
-        for i, state in enumerate(frames):
-            risk = {"score": 100.0}
-            recording.add(state, float(i), risk, risk)
-
-        return recording
+    state = staticmethod(frame_state)
+    record = staticmethod(recorded)
 
     def test_a_rising_counter_marks_a_point_event(self):
         recording = self.record([
@@ -395,6 +400,74 @@ class RecordingTest(unittest.TestCase):
 
         self.assertEqual(recording.points["blink"], [])
         self.assertEqual(recording.flags["distracted"], [False])
+
+
+class FaceGapTest(unittest.TestCase):
+    """
+    A detector reports None, not a dict, on a frame with no face. Its
+    counter is untouched underneath, so the harness has to hold the
+    total rather than read the absence as a count of zero.
+
+    Found on a real recording: a clip with twenty blinks and several
+    face gaps was reported as having a hundred and twelve, because
+    every gap re-counted the whole history as one simultaneous burst.
+    """
+
+    state = staticmethod(frame_state)
+    record = staticmethod(recorded)
+
+    def blind(self):
+        """What a frame with no face in it actually looks like."""
+
+        state = frame_state()
+        state["blink"] = None
+        state["yawn"] = None
+
+        return state
+
+    def test_a_face_gap_invents_no_blinks(self):
+        recording = self.record([
+            self.state(blinks=20),
+            self.blind(),
+            self.blind(),
+            self.state(blinks=20),
+        ])
+
+        self.assertEqual(recording.points["blink"], [0.0] * 20)
+
+    def test_blinks_either_side_of_a_gap_count_once_each(self):
+        recording = self.record([
+            self.state(blinks=1),
+            self.blind(),
+            self.state(blinks=2),
+        ])
+
+        self.assertEqual(recording.points["blink"], [0.0, 2.0])
+
+    def test_a_gap_at_the_very_start_is_not_a_burst(self):
+        """
+        The face is often missing for the first frames of a clip while
+        the camera settles, which put the burst at t=0.
+        """
+
+        recording = self.record([
+            self.blind(),
+            self.blind(),
+            self.state(blinks=3),
+        ])
+
+        self.assertEqual(recording.points["blink"], [2.0] * 3)
+
+    def test_a_section_missing_entirely_is_also_held(self):
+        """Older recordings predate some monitors."""
+
+        partial = self.state(blinks=4)
+        del partial["blink"]
+
+        recording = self.record([self.state(blinks=4), partial,
+                                 self.state(blinks=4)])
+
+        self.assertEqual(recording.points["blink"], [0.0] * 4)
 
 
 class ScoringAgainstTruthTest(unittest.TestCase):

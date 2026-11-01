@@ -80,7 +80,17 @@ class Recording:
         self.samples.append(timestamp)
 
         for name, (section, key) in POINT_COUNTS.items():
-            count = (state.get(section) or {}).get(key, 0) or 0
+            reading = state.get(section)
+            count = None if reading is None else reading.get(key)
+
+            # No reading at all. The detector returns None rather than
+            # a dict when it has no face to measure, and its counter is
+            # untouched underneath -- so the total is held, not read as
+            # zero. Reading it as zero made the first frame after every
+            # face gap look like the whole session's blinks happening
+            # at once, which is where a 51/min blink rate came from.
+            if count is None:
+                continue
 
             # A counter that jumps by more than one means several
             # events landed between samples; record them all.
