@@ -324,6 +324,14 @@ the weighting can be demonstrated without waiting for 3 am or for rain,
 and an overridden hour is labelled `(set by hand)` so a demo is never
 mistaken for a measurement.
 
+**Get the forecast** settles that part before the camera comes on. The
+control sits at the top of the page rather than in the drive controls,
+which are hidden until a drive starts — so for a while the only way to
+reach the forecast was to already be driving, and the browser's location
+prompt arrived over a running monitor. Pressing it first is not
+required: a drive that starts without one asks in the background and
+never waits on the answer.
+
 Drawing every row, always, is the point. The first version printed one
 line and only when something was amplifying, which hid a genuine
 problem: the forecast was working perfectly — fetching, interpreting a
@@ -334,6 +342,25 @@ exactly why `weather_source` exists in the Python. The row now says
 which it is, and the service carries a status (`locating`, `fetching`,
 `ready`, `failed`) so a declined permission or a timed-out request says
 so in words instead of silently weighing nothing.
+
+### Taking an update
+
+A cache-first service worker is what makes the app work in a tunnel, and
+it is also the thing most able to hide a fix. Two have been needed. The
+first: `cache.add()` goes through the ordinary HTTP cache, so a new
+worker could store a stale file and then serve it from its own cache for
+good — fixed by fetching the shell with `cache: "reload"`. The second is
+subtler, and cost a day of a fix appearing not to work: the worker calls
+`skipWaiting()` and claims its clients, so a new version installs
+immediately, but the page already open keeps running the modules it
+loaded from the old cache. A phone went on reading alert banners out
+letter by letter long after the fix had shipped and was sitting unused in
+the cache.
+
+The page now reloads itself once when the controller changes — except
+during a drive, where interrupting a monitoring run to install an update
+would be a far worse failure than running one commit behind. That case
+waits, and offers the reload with the end-of-drive report.
 
 ### What it says out loud
 

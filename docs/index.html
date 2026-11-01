@@ -27,6 +27,46 @@
   <div class="err" id="error" hidden></div>
   <div class="notice" id="notice" hidden></div>
 
+  <!-- ---------- feeding the context by hand ----------
+       These used to live in .controls, which is hidden until a drive
+       starts, so the only way to reach the forecast was to already be
+       driving and the location prompt arrived over a running camera.
+       Above the intro instead: reachable before anyone presses Start,
+       and still there mid-drive, which is where the overrides earn
+       their keep in a demonstration. -->
+  <div class="overrides" id="overrides">
+    <span class="overrides-k">Context</span>
+    <button class="ghost" id="locate">Get the forecast</button>
+
+    <label for="weather">
+      Weather
+      <select id="weather">
+        <option value="">forecast</option>
+        <option value="clear">clear &mdash; &times;1.00</option>
+        <option value="cloudy">cloudy &mdash; &times;1.00</option>
+        <option value="rain">rain &mdash; &times;1.15</option>
+        <option value="heavy_rain">heavy rain &mdash; &times;1.25</option>
+        <option value="fog">fog &mdash; &times;1.25</option>
+        <option value="snow">snow &mdash; &times;1.30</option>
+        <option value="ice">ice &mdash; &times;1.35</option>
+      </select>
+    </label>
+
+    <label for="hour">
+      Hour
+      <select id="hour">
+        <option value="">now</option>
+        <option value="3">03:00 &mdash; &times;1.40</option>
+        <option value="1">01:00 &mdash; &times;1.20</option>
+        <option value="6">06:00 &mdash; &times;1.20</option>
+        <option value="15">15:00 &mdash; &times;1.15</option>
+        <option value="12">12:00 &mdash; &times;1.00</option>
+      </select>
+    </label>
+
+    <span class="weather-note" id="weather-note"></span>
+  </div>
+
   <!-- ---------- start screen ---------- -->
   <section class="intro" id="intro">
     <h2>Fatigue and distraction monitoring, running on your phone</h2>
@@ -169,6 +209,7 @@
     </div>
   </section>
 
+
   <div class="grid">
     <div class="cell" data-cell="ear">
       <div class="k">Eye opening</div><div class="v">--</div><div class="s">EAR</div>
@@ -215,44 +256,18 @@
     <button class="ghost" id="recal">Recalibrate</button>
     <button class="ghost" id="landmarks">Hide landmarks</button>
     <button class="ghost" id="stop">Stop</button>
-
-    <label for="hour">
-      Hour
-      <select id="hour">
-        <option value="">now</option>
-        <option value="3">03:00 &mdash; &times;1.40</option>
-        <option value="1">01:00 &mdash; &times;1.20</option>
-        <option value="6">06:00 &mdash; &times;1.20</option>
-        <option value="15">15:00 &mdash; &times;1.15</option>
-        <option value="12">12:00 &mdash; &times;1.00</option>
-      </select>
-    </label>
-
-    <label for="weather">
-      Weather
-      <select id="weather">
-        <option value="">forecast</option>
-        <option value="clear">clear &mdash; &times;1.00</option>
-        <option value="cloudy">cloudy &mdash; &times;1.00</option>
-        <option value="rain">rain &mdash; &times;1.15</option>
-        <option value="heavy_rain">heavy rain &mdash; &times;1.25</option>
-        <option value="fog">fog &mdash; &times;1.25</option>
-        <option value="snow">snow &mdash; &times;1.30</option>
-        <option value="ice">ice &mdash; &times;1.35</option>
-      </select>
-    </label>
-
-    <button class="ghost" id="locate">Retry forecast</button>
-    <span class="weather-note" id="weather-note"></span>
   </div>
 
   <p class="note">
     <strong>Nothing above needs setting.</strong> The hour comes from this
     device&rsquo;s own clock, the cabin light off the camera, and the forecast
     from your location the first time you allow it &mdash; after that the
-    coordinates are remembered and no drive asks again. The two selectors
-    below only exist to <em>override</em> that, so the weighting can be
-    demonstrated without waiting for 3&nbsp;am or for rain. The weather
+    coordinates are remembered and no drive asks again. Press
+    <strong>Get the forecast</strong> above to do that part now, before the
+    camera starts, rather than answering a location prompt over a monitor
+    that is already running. The two selectors only exist to
+    <em>override</em> any of it, so the weighting can be demonstrated
+    without waiting for 3&nbsp;am or for rain. The weather
     override is what the <code>W</code> key does on the desktop, and the
     panel always says whether a reading came from you, from the forecast, or
     from nowhere at all &mdash; because a &times;1.00 from a clear sky and a

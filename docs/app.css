@@ -307,14 +307,20 @@ button.ghost:hover { background: var(--panel); filter: none; }
 
 /* ---------- controls ---------- */
 
-.controls {
+.controls,
+.overrides {
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
 }
 
-.controls label {
+.overrides {
+  margin-top: -4px;
+}
+
+.controls label,
+.overrides label {
   font-size: 12px;
   color: var(--muted);
   display: flex;
@@ -614,3 +620,13 @@ select {
 }
 
 .ctx-total strong[data-live="on"] { color: var(--warn); }
+
+/* The label on the override row, which sits above the intro and so has
+   to say what it is without the context panel next to it. */
+.overrides-k {
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dim);
+}

@@ -102,6 +102,7 @@ const weather = new WeatherService();
 let landmarker = null, hands = null, objects = null;
 let stream = null;
 let running = false;
+let updateWaiting = false;
 let showLandmarks = true;
 let lastVideoTime = -1;
 let frameIndex = 0;
@@ -822,6 +823,14 @@ function showWeather() {
   el.weatherNote.textContent =
     `${condition.replace(/_/g, " ")} ×${multiplier.toFixed(2)} · ${where}`;
 
+  // Fetching a first forecast and replacing one are different enough
+  // acts to be worth different labels. Skipped mid-request, which owns
+  // the button while it is disabled.
+  if (!el.locate.disabled) {
+    el.locate.textContent =
+      weather.located ? "Refresh forecast" : "Get the forecast";
+  }
+
   // The panel is the real display; keep it in step whenever this
   // changes, including while nothing is running.
   if (!running) {
@@ -1108,6 +1117,15 @@ function stop() {
   el.report.hidden = false;
   el.start.disabled = false;
   el.start.textContent = "Start monitoring";
+
+  // An update landed mid-drive and was held back rather than
+  // interrupting it. The report is on screen and worth reading, so
+  // this offers the reload instead of taking it.
+  if (updateWaiting) {
+    el.notice.hidden = false;
+    el.notice.textContent =
+      "A new version arrived during that drive. Reload to use it.";
+  }
 }
 
 // ----------------------------------------------------------------------
@@ -1150,11 +1168,14 @@ el.weather.addEventListener("change", () => {
   showWeather();
 });
 
-// Only a retry now, for a declined prompt or a forecast that did not
-// arrive. The normal path asks for nothing.
+// The pre-drive path: ask for the location and the forecast now, with
+// nothing else happening, instead of letting the prompt arrive over a
+// camera that has already started. Also the retry, for a declined
+// prompt or a forecast that did not come back.
 el.locate.addEventListener("click", async () => {
   el.locate.disabled = true;
   el.locate.textContent = "Asking…";
+  showWeather();
 
   // A fresh attempt, so a driver who declined and changed their mind
   // is not held to the stored refusal.
@@ -1162,7 +1183,7 @@ el.locate.addEventListener("click", async () => {
   const ok = await weather.begin(performance.now() / 1000);
 
   el.locate.disabled = false;
-  el.locate.textContent = ok ? "Refresh forecast" : "Retry forecast";
+  if (!ok) el.locate.textContent = "Retry forecast";
   showWeather();
 });
 
@@ -1195,6 +1216,36 @@ if (weather.located) {
   weather.refresh(performance.now() / 1000).then(showWeather).catch(() => {});
 }
 
+/*
+ * Taking an update without having to be loaded twice.
+ *
+ * The worker skips waiting and claims its clients, so a new version
+ * takes over the moment it installs -- but a page that is already open
+ * goes on using the modules it loaded from the old cache. That is how
+ * a phone kept reading the banner text out letter by letter long after
+ * the fix had shipped and was sitting in the cache unused: the shell
+ * was new, the running page was not, and nothing connected the two.
+ *
+ * So reload once when the controller changes. The exception is a drive
+ * in progress -- interrupting a monitoring run to install an update
+ * would be a far worse failure than running one commit behind -- which
+ * waits for the end of the drive and offers it instead.
+ */
 if ("serviceWorker" in navigator && location.protocol === "https:") {
+  // A first-ever load has no controller, and that worker claiming the
+  // page is not an update: reloading there would be a pointless second
+  // load on the very first visit.
+  const wasControlled = navigator.serviceWorker.controller !== null;
+  let reloading = false;
+
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    if (!wasControlled || reloading) return;
+
+    if (running) { updateWaiting = true; return; }
+
+    reloading = true;
+    location.reload();
+  });
+
   navigator.serviceWorker.register("./sw.js").catch(() => {});
 }
