@@ -14,14 +14,16 @@ import unittest
 from evaluation import labels as labels_module
 from evaluation.labels import parse
 from evaluation.record_session import (
-    COUNTDOWN_AT,
     SCRIPT,
+    SPEECH_LEAD,
+    SPEECH_RATE,
     Step,
     Voice,
     build_labels,
     chime,
     covered_labels,
     format_labels,
+    lead_time,
     total_seconds,
 )
 
@@ -138,16 +140,59 @@ class SpokenCueTest(unittest.TestCase):
 
         self.assertIn("until I tell you", spoken)
 
-    def test_only_steps_with_room_get_a_countdown(self):
+    def test_no_cue_tells_the_driver_to_act_now(self):
         """
-        A countdown has to finish before the cue it is counting down
-        to, and the spoken cue has to finish before the countdown.
+        A cue is spoken before its step begins, so a cue containing
+        "now" would be asking for the thing early. The word was in two
+        of them when the cue was read out at the boundary instead.
         """
 
         for step in SCRIPT:
-            if step.seconds > COUNTDOWN_AT + 3.0:
-                self.assertGreaterEqual(step.seconds - COUNTDOWN_AT, 6.0,
-                                        step.cue)
+            self.assertNotIn(" now", step.spoken.lower(), step.cue)
+
+
+class LeadTimeTest(unittest.TestCase):
+    """
+    When each cue has to start being spoken.
+
+    The recording this script exists to produce had every episode
+    labelled 2 to 4 seconds before it happened, because the cue was
+    spoken at the moment the label began and the driver acted on the
+    last word. The cues take 1.9 to 5.5 seconds to read aloud --
+    measured by rendering them to audio -- which is the whole of that
+    error.
+    """
+
+    def test_a_longer_cue_needs_longer(self):
+        short = Step(10.0, "Look ahead.")
+        long = Step(10.0, "Look ahead, and keep looking ahead, please.")
+
+        self.assertGreater(lead_time(long), lead_time(short))
+
+    def test_the_lead_covers_the_measured_speaking_rate(self):
+        """
+        The slowest of the script's real sentences ran at 13.5
+        characters a second. Planning any faster than that would put
+        the end of the cue inside the episode.
+        """
+
+        self.assertLessEqual(SPEECH_RATE, 13.5)
+
+    def test_the_cue_is_meant_to_finish_before_the_step(self):
+        self.assertGreater(SPEECH_LEAD, 0.0)
+
+    def test_every_cue_fits_in_the_step_before_it(self):
+        """
+        A cue longer than the step it is announced during would be cut
+        off at the start of that step. Nothing is broken if it is --
+        the announcement just happens as early as it can -- but the
+        driver then gets no quiet moment to prepare, so the script is
+        written to avoid it.
+        """
+
+        for previous, step in zip(SCRIPT, SCRIPT[1:]):
+            self.assertLessEqual(lead_time(step), previous.seconds,
+                                 f"{step.cue!r} after {previous.cue!r}")
 
 
 class VoiceTest(unittest.TestCase):

@@ -32,6 +32,17 @@ Two things it deliberately does not do:
   - **It does not label blinks or yawns.** Those are point events a
     tenth of a second long; a cue card cannot place them. The CSV
     names the labels it does cover, and the harness scores only those.
+
+Each cue is spoken *before* the step it belongs to, timed to finish as
+that step begins. This is not a nicety. The first version spoke a cue
+at the moment the step started and then wrote the label from that same
+moment, so the label began while the instruction was still being read
+out -- and the driver, reasonably, acted on the last word. Measured by
+rendering the script's own sentences to audio: they take 1.9 to 5.5
+seconds to speak, which is where the 2 to 4 seconds of late behaviour
+in the first recording came from. A label wrong by four seconds on a
+ten second cue is a quarter of the episode scored against footage of
+the driver doing something else.
 """
 
 import argparse
@@ -71,6 +82,13 @@ class Step:
 # hands before HANDS OFF WHEEL -- so a four-second cue would be mostly
 # dwell time and would score as a miss for reasons that have nothing to
 # do with accuracy.
+#
+# The unlabelled steps in between are eight seconds rather than the
+# six they need, because each one also has to hold the next cue being
+# spoken: the longest of them takes nearly seven seconds to read out,
+# and a step shorter than that leaves the driver no quiet moment
+# between hearing the instruction and being asked to act on it. See
+# lead_time, and the test that checks every pair in this script.
 SCRIPT = (
     Step(10.0, "Sit still. Look straight at the camera.",
          spoken="Recording. Sit still and look straight at the camera.",
@@ -80,14 +98,14 @@ SCRIPT = (
          note="a quiet stretch, so false positives have room to show"),
 
     Step(10.0, "Turn your head right, away from the camera.", "distracted",
-         spoken="Now turn your head to the right, away from the camera, "
+         spoken="Turn your head to the right, away from the camera, "
                 "and hold it there."),
-    Step(6.0, "Look straight ahead again.",
+    Step(8.0, "Look straight ahead again.",
          spoken="Look straight ahead again."),
 
     Step(10.0, "Hold a phone up beside your face.", "phone",
          spoken="Hold a phone up beside your face, and keep it in shot."),
-    Step(6.0, "Put the phone down. Look ahead.",
+    Step(8.0, "Put the phone down. Look ahead.",
          spoken="Put the phone down, and look ahead."),
 
     Step(12.0, "Yawn twice, slowly and wide.",
@@ -96,9 +114,9 @@ SCRIPT = (
          note="not labelled - a yawn is too short for a cue to place"),
 
     Step(10.0, "Close your eyes. Keep them closed.", "microsleep",
-         spoken="Close your eyes now, and keep them closed until I tell "
+         spoken="Close your eyes, and keep them closed until I tell "
                 "you to open them."),
-    Step(6.0, "Open your eyes. Look ahead.",
+    Step(8.0, "Open your eyes. Look ahead.",
          spoken="Open your eyes, and look ahead."),
 
     Step(12.0, "Hold both hands up where the camera can see them.",
@@ -108,19 +126,28 @@ SCRIPT = (
               "anything"),
     Step(10.0, "Drop both hands out of shot.", "hands_off",
          spoken="Drop both hands right down, out of the picture."),
-    Step(6.0, "Hands back up where they can be seen.",
+    Step(8.0, "Hands back up where they can be seen.",
          spoken="Hands back up where the camera can see them."),
 
     Step(10.0, "Cover the lens with your palm.", "camera_blocked",
          spoken="Cover the lens with your palm. Use your hand, not the "
                 "camera switch or the shutter."),
-    Step(6.0, "Take your hand off the lens. Look ahead.",
+    Step(8.0, "Take your hand off the lens. Look ahead.",
          spoken="Take your hand off the lens, and look ahead."),
 )
 
-# Spoken this long before a cue ends, so somebody with their eyes shut
-# knows the change is coming rather than being startled by it.
-COUNTDOWN_AT = 3.5
+# How fast the Windows synthesizer gets through a cue at Rate 1, in
+# characters per second. Measured by rendering each of the script's own
+# sentences to a wave file and reading its length: the ten of them run
+# from 13.5 to 16.4 characters a second. The lower end is the number to
+# plan with, because the cost of the two directions is not the same --
+# finishing early leaves the driver waiting a moment, finishing late
+# puts the instruction inside the episode it is labelling.
+SPEECH_RATE = 13.0
+
+# And aim to finish this long before the step begins, so the last word
+# is not also the starting gun.
+SPEECH_LEAD = 0.5
 
 # How many frames to sample before opening the writer. A webcam's rate
 # settles after it has woken up, and the file's frame rate has to match
@@ -255,6 +282,19 @@ def total_seconds(script=SCRIPT):
     return sum(step.seconds for step in script)
 
 
+def lead_time(step):
+    """
+    How long before a step begins its cue has to be spoken.
+
+    Long cues need more warning than short ones, so this is measured
+    from the sentence rather than fixed. A step shorter than the cue
+    that follows it simply announces at its own start, which is the
+    earliest it can.
+    """
+
+    return len(step.spoken) / SPEECH_RATE + SPEECH_LEAD
+
+
 def build_labels(boundaries, fps, script=SCRIPT):
     """
     Turn recorded phase boundaries into ground truth.
@@ -351,9 +391,13 @@ def measure_fps(capture, frames=WARMUP_FRAMES):
     return (captured - 1) / elapsed, first
 
 
-def draw_cue(frame, step, remaining, elapsed, total):
+def draw_cue(frame, step, remaining, elapsed, total, upcoming=None):
     """
     The preview overlay. Drawn on a copy that is never recorded.
+
+    `upcoming` is the next step, shown once its cue is being spoken, so
+    that a driver reading the screen and a driver listening to it are
+    told the same thing at the same moment.
     """
 
     preview = frame.copy()
@@ -365,6 +409,10 @@ def draw_cue(frame, step, remaining, elapsed, total):
 
     cv2.putText(preview, step.cue, (16, height - 58), FONT, 0.62, TEXT, 2,
                 cv2.LINE_AA)
+
+    if upcoming is not None:
+        cv2.putText(preview, f"next: {upcoming.cue}", (16, height - 78),
+                    FONT, 0.45, COUNTDOWN, 1, cv2.LINE_AA)
 
     cv2.putText(preview, f"{remaining:.0f}s", (16, height - 22), FONT,
                 0.7, COUNTDOWN, 2, cv2.LINE_AA)
@@ -422,16 +470,22 @@ def record(video_path, source=CAMERA_INDEX, width=FRAME_WIDTH,
         started = time.perf_counter()
         step_started = started
 
-        for step in script:
+        for index, step in enumerate(script):
             boundaries.append(frames)
             step_started = time.perf_counter()
 
             chime()
 
-            if voice is not None:
+            # The first cue has no earlier step to be spoken during, so
+            # it is read out here and runs into its own step. That step
+            # is the unlabelled calibration sit-still, which is the one
+            # place where being late costs nothing.
+            if index == 0 and voice is not None:
                 voice.say(step.spoken)
 
-            counted = False
+            upcoming = script[index + 1] if index + 1 < len(script) else None
+            announce_at = lead_time(upcoming) if upcoming else 0.0
+            announced = upcoming is None or voice is None
 
             while True:
                 now = time.perf_counter()
@@ -440,13 +494,11 @@ def record(video_path, source=CAMERA_INDEX, width=FRAME_WIDTH,
                 if remaining <= 0:
                     break
 
-                # Long enough for a warning to be worth giving, and
-                # for it to finish before the cue changes.
-                if (voice is not None and not counted
-                        and step.seconds > COUNTDOWN_AT + 3.0
-                        and remaining <= COUNTDOWN_AT):
-                    voice.say("three, two, one")
-                    counted = True
+                # The next cue, spoken during the tail of this one so it
+                # lands finished rather than starting at the boundary.
+                if not announced and remaining <= announce_at:
+                    voice.say(upcoming.spoken)
+                    announced = True
 
                 success, frame = capture.read()
 
@@ -462,7 +514,8 @@ def record(video_path, source=CAMERA_INDEX, width=FRAME_WIDTH,
                     cv2.imshow(
                         "Recording - evaluation session",
                         draw_cue(frame, step, remaining,
-                                 now - started, total)
+                                 now - started, total,
+                                 upcoming if announced else None)
                     )
 
                     if cv2.waitKey(1) & 0xFF in (ord("q"), ord("Q"), 27):
