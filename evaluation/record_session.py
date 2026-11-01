@@ -35,6 +35,7 @@ Two things it deliberately does not do:
 """
 
 import argparse
+import os
 import sys
 import time
 
@@ -366,6 +367,14 @@ def parse_args(argv=None):
 def main(argv=None):
 
     args = parse_args(argv)
+
+    # Failing on a missing folder after the driver has sat down and
+    # started performing would be a poor way to find out.
+    for path in (args.video, args.labels):
+        folder = os.path.dirname(path)
+
+        if folder:
+            os.makedirs(folder, exist_ok=True)
 
     print(f"Recording {total_seconds():.0f}s to {args.video}")
     print("Follow the cue at the bottom of the window. Q stops early.")
