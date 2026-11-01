@@ -238,5 +238,147 @@ class BlockedSpellCountTest(unittest.TestCase):
         self.assertEqual(result["blocked_count"], 0)
 
 
+class FrozenFeedTest(unittest.TestCase):
+    """
+    The way the camera actually went blind.
+
+    Covering the lens by hand on this project's test recording produced
+    two thirds of a second of black and then a still graphic: Windows
+    had spotted the obstruction and substituted its own picture, bright
+    and full of detail. 200 consecutive frames, bit identical. Every
+    brightness-and-variance check passed and the monitor said nothing,
+    which is the whole 0% recall on that cue.
+
+    A live sensor's noise means two consecutive frames are never
+    identical to the bit, so frames that are say the pipeline is being
+    handed the same picture over and over.
+    """
+
+    FPS = 30.0
+
+    def still(self, camera, fingerprint, start, seconds,
+              brightness=140.0, variance=50.0):
+        """Hold one fingerprint; returns (last result, next timestamp)."""
+
+        result = None
+        timestamp = start
+
+        for _ in range(int(round(seconds * self.FPS))):
+            result = camera.update(brightness, variance, timestamp,
+                                   fingerprint=fingerprint)
+            timestamp += 1 / self.FPS
+
+        return result, timestamp
+
+    def moving(self, camera, start, seconds,
+               brightness=140.0, variance=50.0):
+        """A live feed: every frame differs from the last."""
+
+        result = None
+        timestamp = start
+        frame = 0
+
+        for _ in range(int(round(seconds * self.FPS))):
+            result = camera.update(brightness, variance, timestamp,
+                                   fingerprint=("live", frame))
+            timestamp += 1 / self.FPS
+            frame += 1
+
+        return result, timestamp
+
+    def test_a_still_graphic_is_blocked(self):
+        result, _ = self.still(monitor(), "graphic", 0.0, 3.0)
+
+        self.assertTrue(result["blocked"])
+        self.assertTrue(result["frozen"])
+
+    def test_the_driver_is_told_which_problem_it_is(self):
+        """
+        A hand over the lens is fixed by moving the hand. A substituted
+        graphic is not, so the two cannot share a message.
+        """
+
+        result, _ = self.still(monitor(), "graphic", 0.0, 3.0)
+        self.assertEqual(result["reason"], "frozen")
+
+        result = feed(monitor(), 3.0, 1.0, 0.0, 10.0)
+        self.assertEqual(result["reason"], "flat")
+
+    def test_a_live_camera_on_a_still_scene_is_not_blocked(self):
+        """
+        The reading that matters: an empty, motionless, well-lit cabin
+        looks exactly like the graphic to every other measure.
+        """
+
+        result, _ = self.moving(monitor(), 0.0, 10.0)
+
+        self.assertFalse(result["blocked"])
+        self.assertFalse(result["frozen"])
+
+    def test_a_couple_of_duplicate_frames_are_not_enough(self):
+        """Encoders pad with duplicates, and a dropped frame repeats."""
+
+        camera = monitor()
+
+        _, t = self.moving(camera, 0.0, 2.0)
+        result, _ = self.still(camera, "dupe", t, 0.1)
+
+        self.assertFalse(result["blocked"])
+
+    def test_the_feed_coming_back_clears_it(self):
+        camera = monitor()
+
+        _, t = self.still(camera, "graphic", 0.0, 3.0)
+        result, _ = self.moving(camera, t, 2.0)
+
+        self.assertFalse(result["blocked"])
+        self.assertFalse(result["frozen"])
+
+    def test_one_frozen_spell_counts_once(self):
+        camera = monitor()
+
+        _, t = self.still(camera, "graphic", 0.0, 5.0)
+        result, _ = self.moving(camera, t, 1.0)
+
+        self.assertEqual(result["blocked_count"], 1)
+
+    def test_a_second_spell_counts_again(self):
+        camera = monitor()
+
+        _, t = self.still(camera, "graphic", 0.0, 3.0)
+        _, t = self.moving(camera, t, 2.0)
+        result, _ = self.still(camera, "graphic", t, 3.0)
+
+        self.assertEqual(result["blocked_count"], 2)
+
+    def test_a_dark_lens_is_still_caught_while_the_feed_moves(self):
+        """The original check has not been replaced, only joined."""
+
+        camera = monitor()
+
+        result, _ = self.moving(camera, 0.0, 5.0, brightness=3.0,
+                                variance=1.0)
+
+        self.assertTrue(result["blocked"])
+        self.assertFalse(result["frozen"])
+
+    def test_callers_without_a_fingerprint_are_unaffected(self):
+        """
+        The pipeline passes one; offline callers and every test above
+        this class do not.
+        """
+
+        result = feed(monitor(), 140.0, 50.0, 0.0, 10.0)
+
+        self.assertFalse(result["blocked"])
+        self.assertFalse(result["frozen"])
+
+    def test_a_blocked_feed_reports_how_long(self):
+        result, _ = self.still(monitor(), "graphic", 0.0, 4.0)
+
+        self.assertAlmostEqual(result["blocked_duration"], 4.0 - 1 / 30.0,
+                               places=2)
+
+
 if __name__ == "__main__":
     unittest.main()

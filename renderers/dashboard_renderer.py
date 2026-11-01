@@ -242,7 +242,8 @@ class DashboardRenderer:
                 "CAMERA",
                 "BLOCKED",
                 BAD,
-                f"flat for {camera['blocked_duration']:.0f}s"
+                f"{camera.get('reason', 'flat')} for "
+                f"{camera['blocked_duration']:.0f}s"
             )]
 
         strength = state.get("enhancement") or 0.0

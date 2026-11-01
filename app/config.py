@@ -332,6 +332,14 @@ CAMERA_BLOCKED_VARIANCE = 8.0
 # has not woken up yet do not raise it.
 CAMERA_BLOCKED_TIME = 2.0
 
+# How long the picture must stay identical to the bit before the feed
+# is called frozen. Shorter than the dark-lens window because the
+# evidence is far stronger: a live sensor's noise means two consecutive
+# frames are never bit identical, so even one pair is already strange.
+# A second of them is to allow for the duplicate frames that encoders
+# pad with and that a dropped frame produces.
+CAMERA_FROZEN_TIME = 1.0
+
 # ==========================
 # Low Light Enhancement
 # ==========================

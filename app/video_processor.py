@@ -111,12 +111,13 @@ class VideoProcessor:
         # is what the confidence layer and the context layer are given,
         # so it has to describe the camera's real view, not the lifted
         # copy the models go on to see.
-        brightness, variance = self._luminance(frame)
+        brightness, variance, fingerprint = self._luminance(frame)
 
         camera_data = self.camera_monitor.update(
             brightness,
             variance,
-            timestamp
+            timestamp,
+            fingerprint=fingerprint
         )
 
         enhancement = 0.0
@@ -289,16 +290,23 @@ class VideoProcessor:
 
     def _luminance(self, frame):
         """
-        (mean, standard deviation) of the frame's pixels, 0-255.
+        (mean, standard deviation, fingerprint) of the frame's pixels.
 
-        The spread is what separates a covered lens from a dark cabin,
-        so both come from the same sample.
+        The mean and the spread are on a 0-255 scale; the spread is what
+        separates a covered lens from a dark cabin, so both come from
+        the same sample. The fingerprint hashes that same sample, which
+        is how the monitor notices a feed that has stopped moving
+        without paying for a second pass over the frame.
         """
 
         stride = self.BRIGHTNESS_STRIDE
         sample = frame[::stride, ::stride]
 
-        return float(sample.mean()), float(sample.std())
+        return (
+            float(sample.mean()),
+            float(sample.std()),
+            hash(sample.tobytes())
+        )
 
     def _update_fps(self):
 
