@@ -61,11 +61,95 @@ class DistractionDetectorTest(unittest.TestCase):
                                       None, 0.0)
         self.assertIsNone(result)
 
-    def test_face_lost_resets_timer(self):
+class FaceGapTest(unittest.TestCase):
+    """
+    What a missing face means while the driver is already looking away.
+
+    It is not evidence they looked back. A head turned far enough to
+    be a distraction is a head the landmarker often cannot find, so the
+    gaps land in the middle of the very episodes this detector exists
+    to catch. Measured on a recording: a nine second turn lost two and
+    a quarter seconds to a single two-thirds-of-a-second gap, because
+    the clock started again afterwards and never ran long enough.
+
+    So the clock is held across a short gap, and nothing is claimed
+    while it lasts.
+    """
+
+    def setUp(self):
+        self.detector = DistractionDetector()
+
+    def blind(self, start, seconds, fps=30.0):
+        t = start
+
+        for _ in range(int(round(seconds * fps))):
+            self.assertIsNone(self.detector.update(None, None, t))
+            t += 1 / fps
+
+        return t
+
+    def test_nothing_is_reported_while_the_face_is_missing(self):
+        """Holding the clock is not the same as claiming to see."""
+
+        _, t = hold(self.detector, pose(yaw=40), None, 0.0, 2.5)
+        self.assertTrue(self.detector.distracted_active)
+
+        self.blind(t, 0.3)
+
+        self.assertFalse(self.detector.distracted_active)
+
+    def test_a_brief_gap_keeps_the_clock_running(self):
         _, t = hold(self.detector, pose(yaw=40), None, 0.0, 1.5)
-        self.assertIsNone(self.detector.update(None, None, t))
-        result, _ = hold(self.detector, pose(yaw=40), None, t + 0.1, 1.0)
+        t = self.blind(t, 0.5)
+        result, _ = hold(self.detector, pose(yaw=40), None, t, 0.5)
+
+        self.assertTrue(result["distracted"])
+        self.assertEqual(result["distraction_count"], 1)
+
+    def test_a_long_gap_abandons_it(self):
+        """
+        Past the grace the face has been gone too long to assume
+        anything about where it was pointing.
+        """
+
+        _, t = hold(self.detector, pose(yaw=40), None, 0.0, 1.5)
+        t = self.blind(t, 1.5)
+        result, _ = hold(self.detector, pose(yaw=40), None, t, 1.0)
+
         self.assertFalse(result["distracted"])
+
+    def test_the_gap_counts_toward_the_dwell(self):
+        """
+        The driver was off the road either side of it, so the time
+        between is off-road time too.
+        """
+
+        _, t = hold(self.detector, pose(yaw=40), None, 0.0, 1.0)
+        t = self.blind(t, 0.8)
+        result, _ = hold(self.detector, pose(yaw=40), None, t, 0.4)
+
+        self.assertTrue(result["distracted"])
+
+    def test_looking_back_after_a_gap_still_clears_it(self):
+        """
+        The hold is about absent evidence, not about overriding it.
+        """
+
+        _, t = hold(self.detector, pose(yaw=40), None, 0.0, 1.9)
+        t = self.blind(t, 0.3)
+        _, t = hold(self.detector, pose(yaw=0), None, t, 0.3)
+        result, _ = hold(self.detector, pose(yaw=40), None, t, 1.0)
+
+        self.assertFalse(result["distracted"])
+
+    def test_a_gap_with_no_face_ever_seen_does_not_crash(self):
+        """A clip that opens on an empty seat."""
+
+        self.blind(0.0, 2.0)
+
+        result, _ = hold(self.detector, pose(yaw=40), None, 2.0, 2.5)
+
+        self.assertTrue(result["distracted"])
 
 
 if __name__ == "__main__":

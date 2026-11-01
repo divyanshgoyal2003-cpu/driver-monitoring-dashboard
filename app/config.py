@@ -183,6 +183,14 @@ OFF_ROAD_PITCH = 20.0
 # ...and the driver is distracted once it stays off the road this long.
 DISTRACTION_DURATION = 2.0
 
+# A face may go missing for this long without the off-road clock being
+# abandoned. A head turned far enough to be a distraction is also a
+# head the landmarker struggles to find, so short gaps happen in the
+# middle of exactly the episodes worth catching, and starting the
+# count again afterwards means a long turn never reports at all.
+# Nothing is claimed while the face is missing; only the clock is kept.
+DISTRACTION_FACE_GAP = 1.0
+
 # ==========================
 # Phone Detection
 # ==========================

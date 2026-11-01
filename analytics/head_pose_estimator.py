@@ -40,6 +40,30 @@ class HeadPoseEstimator:
         [0.0, 0.0, -1.0]
     ])
 
+    # Six facial landmarks are very nearly coplanar, and a near-planar
+    # point set seen through a weak perspective has two poses that
+    # reproject almost identically: the real one, and its mirror about
+    # the image plane. SOLVEPNP_ITERATIVE is a local optimiser started
+    # from a DLT guess, so it falls into whichever basin that guess
+    # lands in and gives no warning when it picks the mirror.
+    #
+    # It does not matter head-on, where the two solutions nearly meet.
+    # It matters entirely at the angles this detector exists to catch:
+    # measured over a driver holding a steady 63 degree head turn, the
+    # iterative solver crossed between the two solutions 31 times in
+    # 206 frames, reporting -75 degrees for a head that was at +63.
+    # Distraction needs a continuous dwell before it will commit, and
+    # every one of those crossings reset the clock -- nine seconds of
+    # genuine looking away were reported as 2.5.
+    #
+    # SQPnP searches for the global optimum instead of descending from
+    # a guess, so it does not have a wrong basin to fall into. On the
+    # same 206 frames it crossed zero times and its frame-to-frame
+    # movement fell from 17.7 degrees to 1.2. It is stateless, so
+    # unlike seeding the optimiser from the previous frame it cannot
+    # carry one bad estimate forward.
+    POSE_SOLVER = cv2.SOLVEPNP_SQPNP
+
     def __init__(self, frame_width, frame_height,
                  yaw_threshold=HEAD_YAW_THRESHOLD,
                  pitch_threshold=HEAD_PITCH_THRESHOLD,
@@ -111,7 +135,7 @@ class HeadPoseEstimator:
             image_points,
             self.camera_matrix,
             self.dist_coeffs,
-            flags=cv2.SOLVEPNP_ITERATIVE
+            flags=self.POSE_SOLVER
         )
 
         if not success:

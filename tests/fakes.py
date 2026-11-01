@@ -3,6 +3,7 @@ Synthetic MediaPipe-style landmarks with known geometry, for unit tests.
 Coordinates are given in pixels and stored normalized, like MediaPipe.
 """
 
+import random
 from types import SimpleNamespace
 
 import cv2
@@ -86,11 +87,19 @@ def _rz(deg):
                      [0, 0, 1]])
 
 
-def posed_face(yaw=0.0, pitch=0.0, roll=0.0, face=None):
+def posed_face(yaw=0.0, pitch=0.0, roll=0.0, face=None, model=None,
+               distance=3000.0):
     """
     Face whose six head pose landmarks are the exact projection of the
     estimator's 3D model at the given angles (HeadPoseEstimator's sign
     convention). RQDecomp3x3 decomposes R = Rz(roll) Ry(yaw) Rx(pitch).
+
+    `model` projects a different 3D face than the one the estimator
+    solves with, and `distance` moves it along the optical axis. The
+    defaults describe an impossible driver -- the canonical head, far
+    enough away to be nearly orthographic -- which every solver gets
+    right. Real faces are neither, and the pose ambiguity lives in the
+    gap: see shaped_face.
     """
 
     estimator = HeadPoseEstimator(WIDTH, HEIGHT)
@@ -99,10 +108,10 @@ def posed_face(yaw=0.0, pitch=0.0, roll=0.0, face=None):
     pnp_rotation = head_rotation @ HeadPoseEstimator.MODEL_TO_CAMERA
 
     rvec, _ = cv2.Rodrigues(pnp_rotation)
-    tvec = np.array([0.0, 0.0, 3000.0])
+    tvec = np.array([0.0, 0.0, distance])
 
     points, _ = cv2.projectPoints(
-        estimator.model_points,
+        estimator.model_points if model is None else model,
         rvec,
         tvec,
         estimator.camera_matrix,
@@ -124,6 +133,66 @@ def posed_face(yaw=0.0, pitch=0.0, roll=0.0, face=None):
         set_pixel(face, index, x, y)
 
     return face
+
+
+# Roughly how far a driver's head sits from a cabin camera, in the
+# millimetres the 3D model is written in. Close enough that perspective
+# is doing real work, which is the regime the pose solver has to cope
+# with.
+DRIVER_DISTANCE = 700.0
+
+
+def shaped_face(yaw=0.0, pitch=0.0, roll=0.0, variation=20.0, seed=0,
+                distance=DRIVER_DISTANCE):
+    """
+    A face at driver distance whose proportions are not the estimator's
+    generic model: eye spacing, mouth width, chin length and the depth
+    of each feature are scaled by up to `variation` percent, drawn from
+    `seed` so the same head comes back on every run.
+
+    The variation is mirrored about the midline, because real heads are
+    very nearly symmetric and a lopsided one would read as turned
+    whatever the solver did -- that is a face genuinely pointing
+    slightly sideways, not a wrong answer.
+
+    This is the gap the pose ambiguity lives in. The solver fits the
+    canonical model to landmarks that came from a differently shaped
+    head, and the reprojection error that leaves is enough for a
+    near-planar point set to fit its own mirror image about as well as
+    it fits the truth.
+    """
+
+    estimator = HeadPoseEstimator(WIDTH, HEIGHT)
+    rng = random.Random(seed)
+
+    def scale():
+        return 1.0 + rng.uniform(-variation, variation) / 100.0
+
+    # One scale per feature per axis, shared by the left and right of
+    # each pair so the head stays symmetric.
+    eye = (scale(), scale(), scale())
+    mouth = (scale(), scale(), scale())
+    chin = (scale(), scale())
+
+    nose_p, chin_p, left_eye, right_eye, left_mouth, right_mouth = (
+        estimator.model_points
+    )
+
+    def pair(point, scales):
+        x, y, z = point
+        return [x * scales[0], y * scales[1], z * scales[2]]
+
+    model = np.array([
+        list(nose_p),
+        [chin_p[0], chin_p[1] * chin[0], chin_p[2] * chin[1]],
+        pair(left_eye, eye),
+        pair(right_eye, eye),
+        pair(left_mouth, mouth),
+        pair(right_mouth, mouth),
+    ])
+
+    return posed_face(yaw=yaw, pitch=pitch, roll=roll, model=model,
+                      distance=distance)
 
 
 def feed(detector, face, start, duration, fps=30.0):
