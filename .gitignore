@@ -4,5 +4,12 @@ __pycache__/
 trained_models/
 datasets/
 .env
-data/
+# Recordings, thumbnails and the session database: hundreds of
+# megabytes, and regenerable. The hand-corrected evaluation labels are
+# the exception -- they are the ground truth the measurements in the
+# README are quoted from, and a few kilobytes each.
+data/*
+!data/eval/
+data/eval/*
+!data/eval/*.csv
 *.part

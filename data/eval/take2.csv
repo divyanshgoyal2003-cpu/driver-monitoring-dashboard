@@ -1,0 +1,56 @@
+# Take 2, 2026-11-01. 3718 frames, 31.03 fps, 119.8 s, 1280x720.
+#
+# Corrected against the video. The recorder wrote the times the driver
+# was ASKED to act; these are the times the measurement actually
+# changed, read off the raw signals and checked against the frames.
+# Every cue came out 2-4 s late, because the cue is spoken at the
+# start of its own step and takes a few seconds to say.
+#
+# Conventions, which matter because point events are scored to +-0.5s:
+#
+#   yawn   the instant the mouth closes again, which is when the
+#          detector commits. Both were checked frame by frame:
+#          56.82 open / 57.01 shut, and 60.72 open / 60.91 shut.
+#
+#   blink  NOT covered. Three blinks were hand-checked in the quiet
+#          stretch (12.99, 15.69, 17.82 closing; 13.47, 16.18, 18.40
+#          reopening) and the detector found exactly those three, but
+#          the other 110 s were not labelled by eye. Claiming cover
+#          would score 17 real blinks as false positives.
+#
+#   hands_off  NOT covered, and it cannot be. This was recorded at a
+#          desk, and there is no wheel in the frame to have hands on
+#          or off. The monitor's one correct answer for the whole clip
+#          is UNKNOWN -- that is what its can-see gate is for -- so
+#          scoring the cue would report a detector that is working as
+#          designed at 0% recall. The episode below is kept as a
+#          record of what was performed; measuring the cue needs a
+#          clip recorded in a car.
+#
+#   no_seatbelt is covered but reads low on purpose. The driver wore
+#          no belt for all 119.8 s and the detector never once said
+#          otherwise, so precision is 100%; recall is about 5% because
+#          the detector refuses to judge without roughly a face-height
+#          of chest in view and this framing gives it 294 px of the
+#          325 px it wants. The number is the framing, not the
+#          detector.
+#
+#   camera_blocked covers the whole time the lens was defeated, not
+#          just the 0.8 s it was genuinely dark. The palm blacked the
+#          lens at 108.77; by 109.6 Windows had cut the feed and
+#          replaced it with a static camera-off graphic, which is why
+#          200 consecutive frames are bit-identical. A monitor that
+#          cannot see is the condition this label is for, however the
+#          view was lost.
+
+#cover: yawn, distracted, phone, microsleep, camera_blocked, no_seatbelt
+
+start,end,label
+0.00,119.79,no_seatbelt
+21.91,30.94,distracted
+38.67,46.21,phone
+56.92,,yawn
+60.82,,yawn
+64.45,73.25,microsleep
+90.75,101.97,hands_off
+108.77,116.66,camera_blocked

@@ -1,0 +1,19 @@
+# Ground truth for data/eval/drive.mp4, written by reading the video
+# frame by frame, not from a cue schedule.
+#
+# Left out of #cover: on purpose:
+#   blink     - 131 s of blinks is an hour of frame-by-frame labelling
+#   hands_off - there is no wheel in this recording. "Hands not in
+#               shot" is the resting state of a desk video, so it
+#               cannot stand in for hands off a wheel.
+
+#cover: distracted, phone, yawn, microsleep, camera_blocked, no_seatbelt
+
+start,end,label
+0.00,131.20,no_seatbelt
+21.00,29.00,distracted
+35.00,43.00,phone
+53.00,,yawn
+57.00,,yawn
+60.00,87.00,microsleep
+119.90,124.20,camera_blocked
