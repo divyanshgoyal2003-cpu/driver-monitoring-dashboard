@@ -10,7 +10,7 @@
  * the old one.
  */
 
-const CACHE = "driver-monitor-v2";
+const CACHE = "driver-monitor-v3";
 
 // The two optional models are NOT in here. They are opt-in, they are
 // 15 MB between them, and pre-caching them would hand that bill to
@@ -36,7 +36,18 @@ self.addEventListener("install", event => {
   event.waitUntil(
     caches.open(CACHE)
       // Individually, so one failed file does not throw away the rest.
-      .then(cache => Promise.allSettled(SHELL.map(url => cache.add(url))))
+      //
+      // `cache: "reload"` because cache.add() otherwise goes through the
+      // browser's ordinary HTTP cache, and GitHub Pages serves these with
+      // max-age=600. A driver who opened the old version inside the last
+      // ten minutes would get the new index.html against stale modules --
+      // observed live, as a 21 KB detectors.js serving in place of the
+      // 49 KB one, and the app throwing on a class that did not exist yet.
+      // Worse, the stale copy would then be written into the new cache and
+      // served from it for good, since nothing re-fetches a hit.
+      .then(cache => Promise.allSettled(
+        SHELL.map(url => cache.add(new Request(url, { cache: "reload" })))
+      ))
       .then(() => self.skipWaiting())
   );
 });
