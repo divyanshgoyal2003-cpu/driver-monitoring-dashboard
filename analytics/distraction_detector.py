@@ -2,7 +2,8 @@ from app.config import (
     OFF_ROAD_YAW,
     OFF_ROAD_PITCH,
     DISTRACTION_DURATION,
-    DISTRACTION_FACE_GAP
+    DISTRACTION_FACE_GAP,
+    DISTRACTION_RECOVERY
 )
 
 
@@ -18,14 +19,17 @@ class DistractionDetector:
 
     def __init__(self, max_yaw=OFF_ROAD_YAW, max_pitch=OFF_ROAD_PITCH,
                  min_duration=DISTRACTION_DURATION,
-                 face_gap=DISTRACTION_FACE_GAP):
+                 face_gap=DISTRACTION_FACE_GAP,
+                 recovery=DISTRACTION_RECOVERY):
 
         self.max_yaw = max_yaw
         self.max_pitch = max_pitch
         self.min_duration = min_duration
         self.face_gap = face_gap
+        self.recovery = recovery
 
         self.off_road_since = None
+        self.on_road_since = None
         self.last_seen = None
         self.distracted_active = False
         self.distraction_count = 0
@@ -64,6 +68,7 @@ class DistractionDetector:
             # The neutral pose is still being learned, so any offset
             # now is the camera's rather than the driver's.
             self.off_road_since = None
+            self.on_road_since = None
             self.distracted_active = False
             return None
 
@@ -73,14 +78,34 @@ class DistractionDetector:
         off_road = abs(yaw) > self.max_yaw or abs(pitch) > self.max_pitch
 
         if off_road:
+            self.on_road_since = None
+
             if self.off_road_since is None:
                 self.off_road_since = timestamp
 
-            off_road_duration = timestamp - self.off_road_since
+        elif self.off_road_since is not None:
+            # Looking away has to be sustained before it is believed.
+            # Looking back does too, and for the same reason: one
+            # frame is not evidence of anything.
+            #
+            # A head does not travel fifty degrees and return inside a
+            # tenth of a second, so a reading that says it did is a
+            # bad landmark fit, not the driver. One such frame used to
+            # end the episode outright -- on a recorded nine second
+            # turn, a single frame reading 9 degrees between two
+            # reading 54 threw away everything after it, and the turn
+            # was never reported at all.
+            if self.on_road_since is None:
+                self.on_road_since = timestamp
 
-        else:
-            self.off_road_since = None
-            off_road_duration = 0.0
+            if timestamp - self.on_road_since >= self.recovery:
+                self.off_road_since = None
+                self.on_road_since = None
+
+        off_road_duration = (
+            0.0 if self.off_road_since is None
+            else timestamp - self.off_road_since
+        )
 
         distracted = off_road_duration >= self.min_duration
 

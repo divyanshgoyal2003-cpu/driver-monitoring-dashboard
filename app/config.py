@@ -191,6 +191,13 @@ DISTRACTION_DURATION = 2.0
 # Nothing is claimed while the face is missing; only the clock is kept.
 DISTRACTION_FACE_GAP = 1.0
 
+# Looking back at the road has to last this long to end an episode.
+# Entering a distraction already requires a sustained reading; leaving
+# one requires the same, because a head cannot swing fifty degrees and
+# back inside a frame or two. A reading that says it did is a bad
+# landmark fit, and letting one end the episode threw away whole turns.
+DISTRACTION_RECOVERY = 0.3
+
 # ==========================
 # Phone Detection
 # ==========================
