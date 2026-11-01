@@ -25,6 +25,7 @@
   </header>
 
   <div class="err" id="error" hidden></div>
+  <div class="notice" id="notice" hidden></div>
 
   <!-- ---------- start screen ---------- -->
   <section class="intro" id="intro">
@@ -41,18 +42,72 @@
       <li><strong>Drowsiness</strong> &mdash; PERCLOS over a rolling minute</li>
       <li><strong>Yawning</strong> &mdash; counted when the mouth closes again</li>
       <li><strong>Distraction</strong> &mdash; head off the road past 2&nbsp;s</li>
-      <li><strong>Safety index</strong> &mdash; each lapse weighed by how bad,
-          how trustworthy the measurement is, and the time of day</li>
+      <li><strong>Seatbelt</strong> &mdash; the strap&rsquo;s two edges, found
+          by hand rather than by a model</li>
+      <li><strong>Expression</strong> &mdash; brow and mouth shape, smoothed</li>
+      <li><strong>Camera</strong> &mdash; a covered lens, and a feed that has
+          stopped moving</li>
+      <li><strong>Safety index</strong> &mdash; each lapse weighed by how bad it
+          is, how trustworthy the measurement is, and what the situation
+          is doing to the cost of it</li>
     </ul>
 
     <p>
       The first few seconds calibrate: look straight ahead while it learns
       your neutral head position, and keep blinking normally while it learns
-      your eye shape. A fixed blink threshold misreads some people's eyes as
+      your eye shape. A fixed blink threshold misreads some people&rsquo;s eyes as
       permanently shut.
     </p>
 
+    <fieldset class="options">
+      <legend>Two more detectors, each with a model of its own to download</legend>
+
+      <label>
+        <input type="checkbox" id="use-hands">
+        <span>
+          <strong>Hands on the wheel</strong>
+          <em>7.8&nbsp;MB &middot; will not complain until it has proved it can
+              see the wheel at all</em>
+        </span>
+      </label>
+
+      <label>
+        <input type="checkbox" id="use-phone">
+        <span>
+          <strong>Phone in your hand</strong>
+          <em>7.3&nbsp;MB &middot; an object detector, so it also costs frame
+              rate</em>
+        </span>
+      </label>
+
+      <p class="hint">
+        Leave both off and the app needs one 3.6&nbsp;MB model and runs at full
+        speed. Everything in the list above works without them.
+      </p>
+    </fieldset>
+
     <button id="start">Start monitoring</button>
+  </section>
+
+  <!-- ---------- the end of a drive ---------- -->
+  <section class="report" id="report" hidden>
+    <h2>Drive report</h2>
+    <div id="report-body"></div>
+
+    <h3>Earlier drives</h3>
+    <div class="history" id="history"></div>
+
+    <p class="hint">
+      Stored on this phone only, in the browser&rsquo;s own storage. The desktop
+      version writes its sessions to a database for the analytics dashboard;
+      there is no server here, and adding one would mean uploading a record of
+      how tired someone was at work.
+    </p>
+
+    <div class="controls" style="margin-top:16px">
+      <button id="report-close">Back</button>
+      <button class="ghost" id="history-clear">Clear history</button>
+    </div>
   </section>
 
   <!-- ---------- live ---------- -->
@@ -80,6 +135,7 @@
     <div>
       <div class="level" id="level" data-level="SAFE">SAFE</div>
       <div class="contrib" id="contrib"><div class="none">not started</div></div>
+      <div class="context" id="context-label"></div>
     </div>
   </section>
 
@@ -105,6 +161,21 @@
     <div class="cell" data-cell="distractions">
       <div class="k">Distractions</div><div class="v">0</div><div class="s">episodes</div>
     </div>
+    <div class="cell" data-cell="expression">
+      <div class="k">Expression</div><div class="v">--</div><div class="s">blendshapes</div>
+    </div>
+    <div class="cell" data-cell="seatbelt">
+      <div class="k">Seatbelt</div><div class="v">--</div><div class="s">strap edges</div>
+    </div>
+    <div class="cell" data-cell="camera">
+      <div class="k">Camera</div><div class="v">--</div><div class="s">light / spread</div>
+    </div>
+    <div class="cell" data-cell="wheel">
+      <div class="k">Wheel</div><div class="v">off</div><div class="s">hands</div>
+    </div>
+    <div class="cell" data-cell="phone">
+      <div class="k">Phone</div><div class="v">off</div><div class="s">episodes</div>
+    </div>
     <div class="cell" data-cell="session">
       <div class="k">Session</div><div class="v">00:00</div><div class="s">-- fps</div>
     </div>
@@ -114,6 +185,7 @@
     <button class="ghost" id="recal">Recalibrate</button>
     <button class="ghost" id="landmarks">Hide landmarks</button>
     <button class="ghost" id="stop">Stop</button>
+
     <label for="hour">
       Hour
       <select id="hour">
@@ -125,21 +197,56 @@
         <option value="12">12:00 &mdash; &times;1.00</option>
       </select>
     </label>
+
+    <label for="weather">
+      Weather
+      <select id="weather">
+        <option value="">forecast</option>
+        <option value="clear">clear &mdash; &times;1.00</option>
+        <option value="cloudy">cloudy &mdash; &times;1.00</option>
+        <option value="rain">rain &mdash; &times;1.15</option>
+        <option value="heavy_rain">heavy rain &mdash; &times;1.25</option>
+        <option value="fog">fog &mdash; &times;1.25</option>
+        <option value="snow">snow &mdash; &times;1.30</option>
+        <option value="ice">ice &mdash; &times;1.35</option>
+      </select>
+    </label>
+
+    <button class="ghost" id="locate">Use my location</button>
+    <span class="weather-note" id="weather-note"></span>
   </div>
 
   <p class="note">
     The hour selector overrides the clock so the circadian weighting can be
-    shown without waiting for 3&nbsp;am: the same lapse costs more at night,
-    when a fatigue detection is more likely to be real. Fatigue penalties are
-    multiplied; attention penalties are not.
+    shown without waiting for 3&nbsp;am. The weather selector does the same for
+    the forecast, which is what the <code>W</code> key does on the desktop:
+    you can always overrule a forecast, and the panel says whether a reading
+    came from you, from the forecast, or from nowhere at all.
+  </p>
+
+  <p class="note">
+    <strong>What the score is doing.</strong> Each active condition costs
+    <code>base &times; severity &times; confidence &times; context</code>, and
+    the breakdown above prints all four. Severity is how bad this instance is
+    &mdash; a six second glance away against a two second one. Confidence is
+    how much the measurement deserves to be trusted: an eye reading in a dark
+    cabin or on a turned face is worth less than one taken head-on. Context is
+    the only layer that can push a penalty <em>up</em>: the small hours, hours
+    already at the wheel, and a road that leaves less room to recover. Severity
+    and confidence can only ever discount, so <code>base</code> stays the most
+    any one condition can cost and the 100-point budget keeps its meaning.
   </p>
 
   <p class="note">
     Ported from the desktop system in this repository. Head pose comes from
-    MediaPipe's own facial transformation matrix rather than
-    <code>solvePnP</code>, which avoids the mirror ambiguity that made a
-    turned head read as turned the other way. Hands on the wheel, seatbelt
-    and phone detection are not in this build.
+    MediaPipe&rsquo;s own facial transformation matrix rather than
+    <code>solvePnP</code>, which avoids the mirror ambiguity that made a turned
+    head read as turned the other way. The one detector that is not a faithful
+    port is the expression reading: the desktop runs FER+, a trained classifier,
+    and this reads the face blendshapes that come free with the landmarks
+    instead &mdash; cruder, and 35&nbsp;MB cheaper for the smallest penalty in
+    the budget. It is called an expression here rather than an emotion because
+    that is what is actually being measured.
   </p>
 
 </div>

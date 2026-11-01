@@ -23,6 +23,7 @@ A single camera feed is analysed by several models at once. Their outputs are co
 | Alert Sounds | Two pulsed, rising patterns. The fatigue conditions get a longer, higher-climbing alarm than everything else, because a drowsy driver has to be roused rather than informed — see [alert sounds](#alert-sounds). |
 | Driver Safety Index | Each active risk takes points off 100. The result maps to SAFE (≥ 75), CAUTION (≥ 50) or DANGER, with alerts and events. What a risk costs is not fixed — see [dynamic weighting](#dynamic-risk-weighting). |
 | Analytics Dashboard | Each session is saved to SQLite and explored in a Streamlit dashboard. |
+| Installable Web App | The whole system, ported to run on a phone with nothing to install and nothing uploaded — see [on a phone](#on-a-phone). |
 
 ## How it fits together
 
@@ -219,6 +220,98 @@ over the lens does not cost the monitor its right to judge.
 gone: 3 s is the floor and 10 s is the full penalty. It is an attention
 condition, so the context layer applies — hands off the wheel on ice
 costs more than hands off the wheel on a clear road.
+
+## On a phone
+
+The desktop system needs Python, five model files and a laptop. The brief was
+that anyone should be able to open this on their own phone, so [`docs/`](docs/)
+is a progressive web app serving the same system from GitHub Pages:
+
+**<https://divyanshgoyal2003-cpu.github.io/driver-monitoring-dashboard/>**
+
+Open it in a phone browser, allow the camera, and use *Add to Home Screen* for
+an icon and a full-screen launch. A service worker caches the shell and the
+face model, so after the first run it works with the network off — which is the
+point, because a driver monitor that needs a connection is useless in the
+tunnel where you most want one. **The camera feed never leaves the device.**
+There is no server to send it to.
+
+### What runs where
+
+| | Desktop | Browser | Note |
+|---|---|---|---|
+| Blinks, PERCLOS, microsleep | ✓ | ✓ | identical arithmetic |
+| Yawning | ✓ | ✓ | identical |
+| Head pose | `solvePnP` (SQPnP) | MediaPipe matrix | the browser build *cannot* hit the mirror twin — see below |
+| Distraction | ✓ | ✓ | including the recovery debounce and the mouth gate |
+| Camera blocked / frozen feed | ✓ | ✓ | same thresholds, off a 64×48 copy of the frame |
+| Seatbelt | Canny + `HoughLinesP` | Canny + full Hough | written out by hand; see below |
+| Expression | FER+ (ONNX) | face blendshapes | **not a port** — see below |
+| Hands on the wheel | ✓ | ✓ *(opt-in)* | same share rule and `proved` latch |
+| Phone in hand | YOLOv8n | EfficientDet-Lite0 | *(opt-in)*, same COCO class and pooling |
+| Weather context | configured coordinates | browser location prompt | same Open-Meteo call, same WMO table, same ice/fog refinements |
+| Safety index | ✓ | ✓ | all three weighting layers, printed on screen per condition |
+| Session history | SQLite + Streamlit | `localStorage` + drive report | twenty drives, on the phone only |
+| Face detection (YOLO) | ✓ | — | redundant at a mount's distance from the face |
+| Low-light enhancement | ✓ | — | costs a full-frame conversion for frames a phone screen lights anyway |
+
+Three differences are deliberate and worth stating plainly.
+
+**Head pose is better here, not worse.** The desktop solves five near-coplanar
+points with `solvePnP`, which took two bugs to get right because the geometry
+has a near-mirror twin. MediaPipe's WASM build returns a facial transformation
+matrix directly, so the ambiguity cannot arise — `docs/test.html` asserts the
+sign is stable across fifty reads, which is the property the desktop had to
+earn by switching solvers.
+
+**The expression reading is not FER+.** Shipping that classifier would mean an
+ONNX runtime and about 35 MB of download, on a phone, for the smallest penalty
+in the 100-point budget. MediaPipe already emits 52 ARKit blendshape scores
+from the same forward pass as the landmarks, at no extra cost, so a weighted
+sum of the brow, mouth and jaw shapes drives the same 10-point penalty with the
+same smoothing and threshold. It is cruder, it names no emotion, and it would
+not survive a labelled benchmark against FER+. It is called an *expression* in
+the UI rather than an emotion for exactly that reason.
+
+**The seatbelt detector had to be rewritten, not ported.** There is no OpenCV
+in a browser, so `docs/vision.js` contains grayscale, blur, Sobel, Canny with
+non-maximum suppression and hysteresis, a Hough transform and the strap
+pairing. Two substitutions: a global histogram equalisation stands in for
+CLAHE, and a full Hough transform over the allowed angle band stands in for
+`HoughLinesP`, whose randomised sampling gives a different answer run to run
+where a test wants the same one. A full transform is affordable here only
+because the angle band is narrow: a strap leans 30–70 degrees off horizontal
+either way, so 82 of the 180 columns are ever accumulated. Measured on a
+desktop browser against a noisy 640×480 frame it costs 10.4 ms a call and
+finds the strap in 25 runs out of 25; at one frame in six that is 1.7 ms per
+frame, against ~16 ms for the landmarks that run on every frame.
+
+### Two models stay opt-in
+
+The face landmarker is 3.6 MB and everything above depends on it. Hands
+(7.8 MB) and the object detector (7.3 MB) are a third of the download again
+*each*, for one condition apiece, so they are checkboxes on the start screen
+with their sizes written on them, and the service worker does not pre-cache
+them. Leave both off and the app needs one model and runs at full speed.
+
+### Checking it
+
+`docs/test.html` runs 83 checks in the browser, over synthetic landmarks,
+synthetic frames and a strap painted onto a canvas — the same properties the
+`unittest` suite asserts on the desktop, so the two implementations can be
+compared rather than merely trusted. Open it at
+[`/test.html`](https://divyanshgoyal2003-cpu.github.io/driver-monitoring-dashboard/test.html).
+
+It has already earned its keep twice. The painted-strap check failed on the
+first run, and the cause was a genuine bug: in the non-maximum suppression the
+two *diagonal* neighbour pairs were swapped, so the thinning step suppressed
+the ridge of every diagonal edge and found 48 edge pixels in a picture with a
+strap drawn straight across it. Horizontal and vertical edges were unaffected,
+which is why nothing else noticed. The same check also caught the Canny
+thresholds degenerating: they are derived from the region's median level, and
+a median near either end of the range leaves the high threshold clamped to 255
+and unreachable, so the median is now clamped to a band where the derived pair
+still means something.
 
 ## Setup
 

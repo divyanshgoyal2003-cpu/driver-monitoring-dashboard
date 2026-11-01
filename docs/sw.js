@@ -10,14 +10,22 @@
  * the old one.
  */
 
-const CACHE = "driver-monitor-v1";
+const CACHE = "driver-monitor-v2";
 
+// The two optional models are NOT in here. They are opt-in, they are
+// 15 MB between them, and pre-caching them would hand that bill to
+// every driver including the ones who never tick either box. They are
+// picked up by the fetch handler below the first time they are
+// actually used.
 const SHELL = [
   "./",
   "./index.html",
   "./app.css",
   "./app.js",
   "./detectors.js",
+  "./vision.js",
+  "./weather.js",
+  "./history.js",
   "./manifest.webmanifest",
   "./icon.svg",
   "./icon-maskable.svg",
@@ -47,6 +55,11 @@ self.addEventListener("fetch", event => {
   const request = event.request;
 
   if (request.method !== "GET") return;
+
+  // The forecast is the one thing here that is supposed to change, so
+  // it is never served from the cache. Offline it simply fails, and
+  // the weather service falls back to no reading, which weighs 1.0.
+  if (request.url.includes("api.open-meteo.com")) return;
 
   // Cache first: these files never change without a new CACHE name, and
   // the model is far too big to re-fetch on every start.

@@ -11,6 +11,8 @@
   .pass { color: var(--ok); }
   .fail { color: var(--bad); }
   .tally { font-size: 17px; font-weight: 600; margin: 0; }
+  h2.group { font-size: 11px; letter-spacing: .09em; text-transform: uppercase;
+             color: var(--dim); margin: 16px 0 0; font-weight: 600; }
 </style>
 </head>
 <body>
@@ -22,7 +24,7 @@
   <p class="note" style="border:0;padding:0">
     The browser port has to agree with the Python it came from, so the same
     properties the <code>unittest</code> suite checks on the desktop are
-    checked here on synthetic landmarks with known geometry. Two of them are
+    checked here on synthetic inputs with known geometry. Several of them are
     bugs the desktop evaluation harness found and that this port inherits the
     fixes for.
   </p>
@@ -33,6 +35,8 @@
 
 <script type="module">
 import * as D from "./detectors.js";
+import * as V from "./vision.js";
+import { interpret, WEATHER_MULTIPLIERS } from "./weather.js";
 
 const out = [];
 let passed = 0, failed = 0;
@@ -41,6 +45,10 @@ function ok(name, cond, extra = "") {
   cond ? passed++ : failed++;
   out.push(`<span class="${cond ? "pass" : "fail"}">${cond ? "PASS" : "FAIL"}</span>  ` +
            `${name}${extra ? `  <span style="color:var(--dim)">${extra}</span>` : ""}`);
+}
+
+function group(title) {
+  out.push(`\n<span style="color:var(--muted)">— ${title} —</span>`);
 }
 
 const STEP = 1 / 30;
@@ -62,6 +70,8 @@ function face(open) {
 const IDENTITY = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
 
 // ---- head pose ----
+group("head pose");
+
 const straight = D.headPose(IDENTITY);
 ok("an identity matrix is dead ahead",
    Math.abs(straight.yaw) < 0.01 && Math.abs(straight.pitch) < 0.01,
@@ -80,6 +90,8 @@ ok("the sign is stable across repeated reads",
      Math.sign(D.headPose([c,0,-s,0, 0,1,0,0, s,0,c,0, 0,0,0,1]).yaw))).size === 1);
 
 // ---- eyes and mouth ----
+group("eyes and mouth");
+
 const earOpen = D.eyeAspectRatio(face(5), [33,160,158,133,153,144]);
 const earShut = D.eyeAspectRatio(face(0.2), [33,160,158,133,153,144]);
 ok("an open eye is above the default threshold", earOpen > 0.23, `EAR ${earOpen.toFixed(3)}`);
@@ -88,6 +100,8 @@ ok("a resting mouth is below MAR_THRESHOLD",
    D.mouthAspectRatio(face(5)) < 0.34, `MAR ${D.mouthAspectRatio(face(5)).toFixed(3)}`);
 
 // ---- blinks and microsleep ----
+group("blinks, PERCLOS and microsleep");
+
 const blink = new D.BlinkDetector();
 let t = 0;
 const feed = (open, secs) => {
@@ -113,6 +127,8 @@ ok("no face returns null rather than a stale reading",
    blink.update(null, t) === null);
 
 // ---- distraction ----
+group("distraction");
+
 const distraction = new D.DistractionDetector();
 const pose = yaw => ({ yaw, pitch: 0, roll: 0, calibrated: true, reliable: true });
 let dt = 0;
@@ -136,6 +152,8 @@ ok("and it is not recounted as a second one", stray.distraction_count === 1);
 ok("sustained looking back does end it", !hold(0, 1.0).distracted);
 
 // ---- the mouth gate ----
+group("the mouth gate");
+
 // A yawn with the driver facing straight ahead produced 28 degrees of
 // reported yaw on the desktop, and a logged distraction.
 const head = new D.HeadPoseEstimator();
@@ -149,7 +167,338 @@ ok("a pose is not vouched for while the mouth is wide open", yawning.reliable ==
 ok("and the distraction detector then claims nothing",
    distraction.update(yawning, ht) === null);
 
+// ---- the camera itself ----
+group("camera obstruction");
+
+/** Hold one reading for `secs`, with a fresh fingerprint each frame
+ *  unless `freeze` says otherwise. */
+function watch(monitor, { brightness, variance, freeze = false }, secs, from = 0) {
+  let r = null, at = from, n = 0;
+  for (let i = 0; i < secs * 30; i++) {
+    r = monitor.update(brightness, variance, freeze ? 777 : n++, at);
+    at += STEP;
+  }
+  return r;
+}
+
+const lens = new D.CameraMonitor();
+ok("a covered lens is not called blocked straight away",
+   !watch(lens, { brightness: 4, variance: 1 }, 1.0).blocked);
+ok("but it is after CAMERA_BLOCKED_TIME",
+   watch(lens, { brightness: 4, variance: 1 }, 2.0, 1.0).blocked);
+
+// A dark cabin still has shapes, highlights and sensor noise in it.
+// This is the reading that must NOT raise the alarm, or the monitor
+// cries wolf for every night drive.
+const night = new D.CameraMonitor();
+const dim = watch(night, { brightness: 10, variance: 22 }, 5.0);
+ok("a dark cabin with texture in it is not a blocked camera",
+   !dim.blocked, `light ${dim.brightness} spread ${dim.variance}`);
+
+// Until the desktop evaluation went looking for this, a frozen feed
+// read as a calm, safe drive.
+const frozen = new D.CameraMonitor();
+ok("a still picture is not frozen after a tenth of a second",
+   !watch(frozen, { brightness: 120, variance: 40, freeze: true }, 0.1).blocked);
+
+const stuck = watch(frozen, { brightness: 120, variance: 40, freeze: true }, 1.5, 0.1);
+ok("a well-lit but identical feed is frozen, and blocked",
+   stuck.frozen && stuck.blocked && stuck.reason === "frozen");
+
+const moving = frozen.update(130, 40, 999, 2.0);
+ok("one changed frame clears it", !moving.frozen && !moving.blocked);
+
+// ---- hands on the wheel ----
+group("hands on the wheel");
+
+const LOW = [[{ x: 0.3, y: 0.95 }]];     // down where a wheel would be
+const HIGH = [[{ x: 0.3, y: 0.20 }]];    // up beside the face
+const NONE = [];
+
+function show(monitor, hands, secs, from) {
+  let r = null, at = from;
+  // One frame in six, as the real loop samples it.
+  for (let i = 0; i < secs * 5; i++) {
+    r = monitor.update(hands, 0.5, at);
+    at += 0.2;
+  }
+  return r;
+}
+
+const wheel = new D.WheelMonitor();
+const early = show(wheel, LOW, 10, 0);
+ok("ten seconds of hands is not yet proof the wheel is in shot",
+   !early.can_see, `share ${(early.share * 100).toFixed(0)}%`);
+
+const proved = show(wheel, LOW, 25, 10);
+ok("past the warmup, a high share proves it", proved.can_see,
+   `share ${(proved.share * 100).toFixed(0)}%`);
+
+// 1520 frames reported against 349 performed, 22.9% precision: a phone
+// held up beside the face bought sixty seconds of judgement.
+const gesture = new D.WheelMonitor();
+show(gesture, HIGH, 40, 0);
+ok("a hand raised beside the face proves nothing", !gesture.can_see);
+
+// A long legitimate spell off the wheel drives the share down, and it
+// must not take the ability to notice down with it.
+const paused = show(wheel, NONE, 20, 35);
+ok("a long absence raises the alarm rather than withdrawing the claim",
+   paused.can_see && paused.hands_off, `empty ${paused.missing_for.toFixed(1)}s`);
+ok("and it counts as one episode", paused.episodes === 1);
+
+const blind = new D.WheelMonitor();
+const quietWheel = show(blind, NONE, 60, 0);
+ok("a wheel that was never in shot never complains",
+   !quietWheel.can_see && !quietWheel.hands_off);
+
+// ---- phone ----
+group("phone");
+
+const phones = new D.PhoneMonitor();
+const seen = [{ confidence: 0.8 }];
+
+function phoneFor(detections, secs, from) {
+  let r = null, at = from;
+  for (let i = 0; i < secs * 30; i++) { r = phones.update(detections, at); at += STEP; }
+  return r;
+}
+
+ok("a glimpse of a phone is not usage",
+   !phoneFor(seen, 0.3, 0).phone_in_use);
+ok("half a second of it is", phoneFor(seen, 0.4, 0.3).phone_in_use);
+ok("a detection below PHONE_CONFIDENCE is ignored",
+   new D.PhoneMonitor().update([{ confidence: 0.2 }], 0).phones.length === 0);
+
+// A missed frame is not a phone put down.
+const keptHeld = phones.update([], 0.9);
+ok("one empty frame does not end the usage", keptHeld.phone_in_use);
+const released = phoneFor([], 1.5, 0.9);
+ok("a second of nothing does", !released.phone_in_use);
+ok("and the episode was counted once", released.episodes === 1);
+
+// ---- seatbelt ----
+group("seatbelt");
+
+function belt(monitor, observation, secs, from) {
+  let r = null, at = from;
+  for (let i = 0; i < secs * 5; i++) { r = monitor.update(observation, at); at += 0.2; }
+  return r;
+}
+
+const SEEN_ON = { visible: true, belt_found: true, roi: null, strap: null };
+const SEEN_OFF = { visible: true, belt_found: false, roi: null, strap: null };
+const UNSEEN = { visible: false, belt_found: false, roi: null, strap: null };
+
+const belts = new D.SeatbeltMonitor();
+const noChest = belt(belts, UNSEEN, 3, 0);
+ok("a chest that is not in view is UNKNOWN, not OFF",
+   noChest.status === "UNKNOWN");
+
+const wearing = belt(new D.SeatbeltMonitor(), SEEN_ON, 2, 0);
+ok("a strap found in most visible frames reads ON", wearing.status === "ON");
+
+const missing = belt(new D.SeatbeltMonitor(), SEEN_OFF, 2, 0);
+ok("no strap in any visible frame reads OFF", missing.status === "OFF",
+   `ratio ${missing.ratio.toFixed(2)}`);
+
+// A phone on a windscreen mount sees a face and no chest, which is the
+// normal case and the reason this cannot simply default to OFF.
+ok("its confidence is lowest at the boundary and highest at zero",
+   D.confidence("no_seatbelt", { seatbelt: { ratio: 0 } }) >
+   D.confidence("no_seatbelt", { seatbelt: { ratio: D.CONFIG.SEATBELT_OFF_RATIO } }),
+   `${D.confidence("no_seatbelt", { seatbelt: { ratio: 0 } }).toFixed(2)} vs ` +
+   `${D.confidence("no_seatbelt", { seatbelt: { ratio: 0.2 } }).toFixed(2)}`);
+
+// ---- the strap's geometry ----
+group("strap geometry");
+
+/** Rasterise a line into an edge map. */
+function line(edges, w, h, x1, y1, x2, y2) {
+  const steps = Math.ceil(Math.hypot(x2 - x1, y2 - y1)) * 2;
+  for (let i = 0; i <= steps; i++) {
+    const x = Math.round(x1 + (x2 - x1) * i / steps);
+    const y = Math.round(y1 + (y2 - y1) * i / steps);
+    if (x >= 0 && y >= 0 && x < w && y < h) edges[y * w + x] = 1;
+  }
+}
+
+const W = 120, H = 120;
+const edges = new Uint8Array(W * H);
+line(edges, W, H, 10, 20, 60, 90);
+line(edges, W, H, 30, 5, 80, 75);     // parallel, ~25 px away
+
+const LIMITS = {
+  minAngle: D.CONFIG.SEATBELT_MIN_ANGLE, maxAngle: D.CONFIG.SEATBELT_MAX_ANGLE,
+  minLength: 0.35 * H, maxGap: 7, minVotes: 20
+};
+
+const edgesFound = V.segments(edges, W, H, LIMITS);
+ok("the Hough transform finds both strap edges", edgesFound.length >= 2,
+   `${edgesFound.length} edges`);
+ok("and both lean inside the allowed angle band",
+   edgesFound.slice(0, 2).every(e =>
+     Math.abs(e.angle) >= D.CONFIG.SEATBELT_MIN_ANGLE - 2 &&
+     Math.abs(e.angle) <= D.CONFIG.SEATBELT_MAX_ANGLE + 2),
+   `angles ${edgesFound.slice(0, 2).map(e => e.angle.toFixed(0)).join(", ")}`);
+
+const PAIRING = {
+  minWidth: D.CONFIG.SEATBELT_MIN_WIDTH, maxWidth: D.CONFIG.SEATBELT_MAX_WIDTH,
+  parallelTolerance: 8, minOverlap: 0.5, midlineShare: 0.15
+};
+
+ok("two parallel edges a strap-width apart are a strap",
+   V.findStrap(edgesFound, 100, 45, PAIRING) !== null);
+
+ok("one edge on its own is not",
+   V.findStrap(edgesFound.slice(0, 1), 100, 45, PAIRING) === null);
+
+// Lapels and shirt collars are just as diagonal, but they converge
+// toward the centre and stop there.
+const lapels = new Uint8Array(W * H);
+line(lapels, W, H, 20, 10, 55, 80);
+line(lapels, W, H, 100, 10, 65, 80);
+const lapelEdges = V.segments(lapels, W, H, LIMITS);
+ok("two edges leaning opposite ways are not",
+   V.findStrap(lapelEdges, 100, 60, PAIRING) === null,
+   `${lapelEdges.length} edges`);
+
+// End to end, through a real canvas, the way the app calls it.
+const canvas = document.createElement("canvas");
+canvas.width = 320; canvas.height = 240;
+const paint = canvas.getContext("2d", { willReadFrequently: true });
+paint.fillStyle = "#808080";
+paint.fillRect(0, 0, 320, 240);
+paint.strokeStyle = "#1a1a1a";
+paint.lineWidth = 20;
+paint.beginPath();
+paint.moveTo(210, 80);
+paint.lineTo(120, 180);
+paint.stroke();
+
+const strap = D.detectSeatbelt(paint, [130, 20, 190, 80], 320, 240);
+ok("a painted strap below a face box is found", strap.visible && strap.belt_found);
+
+// The chest out of frame is the normal case on a windscreen mount, and
+// the honest answer is that nothing can be said.
+const cropped = D.detectSeatbelt(paint, [130, 170, 190, 230], 320, 240);
+ok("a face too low in frame leaves no chest to judge", !cropped.visible);
+
+// ---- expression ----
+group("expression");
+
+const shapes = score => Object.keys({
+  browDownLeft: 0, browDownRight: 0, mouthFrownLeft: 0, mouthFrownRight: 0,
+  browInnerUp: 0, eyeSquintLeft: 0, eyeSquintRight: 0,
+  mouthPressLeft: 0, mouthPressRight: 0, jawForward: 0
+}).map(categoryName => ({ categoryName, score }));
+
+const neutral = new D.ExpressionAnalyzer();
+let expr = null;
+for (let i = 0; i < 60; i++) expr = neutral.update(shapes(0.05));
+ok("a resting face is not a negative expression", !expr.negative,
+   `${(expr.confidence * 100).toFixed(0)}%`);
+
+const cross = new D.ExpressionAnalyzer();
+ok("one expressive frame is not a mood",
+   !cross.update(shapes(0.9)).negative);
+
+for (let i = 0; i < 60; i++) expr = cross.update(shapes(0.9));
+ok("a sustained one is", expr.negative, `${(expr.confidence * 100).toFixed(0)}%`);
+
+ok("no face returns null rather than a stale reading",
+   new D.ExpressionAnalyzer().update(null) === null);
+
+// ---- weather ----
+group("weather");
+
+ok("a clear sky weighs nothing", WEATHER_MULTIPLIERS[interpret(0, 18, 20000)] === 1.0);
+ok("rain weighs 1.15", interpret(61, 12, 20000) === "rain");
+
+// Liquid rain at or below freezing is ice on the tarmac whatever the
+// forecast calls it.
+ok("rain at freezing point is ice", interpret(61, 0.2, 20000) === "ice");
+
+// Snow lands already frozen and grips better than a freezing-rain glaze.
+ok("snow at freezing point is still snow", interpret(71, -2, 20000) === "snow");
+
+// Visibility this low is fog-grade however clear the sky is said to be.
+ok("a clear sky you cannot see through is fog", interpret(1, 10, 400) === "fog");
+
+// Both refinements only ever pick the WORSE of the two readings.
+ok("and they never make the road sound better",
+   interpret(71, -5, 300) === "snow", `${interpret(71, -5, 300)}`);
+
+// A forecast the system cannot interpret must not silently remove the
+// amplification by reading as "clear".
+ok("an unrecognised code is no reading at all", interpret(4242, 10, 20000) === null);
+
+// ---- context ----
+group("driving context");
+
+const noon = new D.DrivingContext({ hour: 12 });
+ok("midday, fresh, clear and lit amplifies nothing",
+   Math.abs(noon.fatigueMultiplier() - 1) < 1e-9 &&
+   Math.abs(noon.attentionMultiplier() - 1) < 1e-9);
+
+const small = new D.DrivingContext({ hour: 3 });
+ok("3 am multiplies fatigue by 1.40",
+   Math.abs(small.fatigueMultiplier() - 1.40) < 1e-9);
+ok("but leaves attention alone -- a glance away is no worse at 3 am",
+   Math.abs(small.attentionMultiplier() - 1) < 1e-9);
+
+const long = new D.DrivingContext({ hour: 12, elapsed: 2 * 3600 });
+ok("two hours at the wheel adds 25% to fatigue",
+   Math.abs(long.fatigueMultiplier() - 1.25) < 1e-9);
+
+const wet = new D.DrivingContext({ hour: 12, weather: "rain" });
+ok("rain amplifies BOTH families -- it is about consequence, not cause",
+   Math.abs(wet.fatigueMultiplier() - 1.15) < 1e-9 &&
+   Math.abs(wet.attentionMultiplier() - 1.15) < 1e-9);
+
+const dark = new D.DrivingContext({ hour: 12, brightness: 20 });
+ok("a dark cabin leaves less margin for a glance away",
+   dark.attentionMultiplier() > 1.0,
+   `attention ×${dark.attentionMultiplier().toFixed(3)}`);
+
+// Context is the only layer that can push a penalty up, so it must
+// never be able to push one down.
+const everything = new D.DrivingContext({
+  hour: 3, elapsed: 4 * 3600, brightness: 5, weather: "ice" });
+ok("nothing in the context layer can ever discount",
+   everything.fatigueMultiplier() >= 1 && everything.attentionMultiplier() >= 1,
+   `fatigue ×${everything.fatigueMultiplier().toFixed(2)}`);
+
+ok("a weather string nobody expected weighs 1.0",
+   new D.DrivingContext({ weather: "frogs" }).weatherMultiplier() === 1.0);
+
+// ---- confidence ----
+group("confidence");
+
+// Night raises the risk a drowsy driver poses, but it lowers the
+// camera's ability to see that driver. Without this the engine would
+// amplify its own noise at exactly the hour false alarms do the most
+// damage.
+const lit = D.confidence("microsleep", { blink: { confidence: 1 } }, 0);
+const unlit = D.confidence("microsleep", { blink: { confidence: 1 } }, 1);
+ok("an eye measurement in the dark is trusted less",
+   unlit < lit, `${lit.toFixed(2)} -> ${unlit.toFixed(2)}`);
+
+const headOn = D.confidence("drowsy", { blink: { confidence: 1 }, head_pose: { yaw: 0 } });
+const askew = D.confidence("drowsy", { blink: { confidence: 1 }, head_pose: { yaw: 50 } });
+ok("and so is one taken on a turned face", askew < headOn,
+   `${headOn.toFixed(2)} -> ${askew.toFixed(2)}`);
+
+ok("confidence never reaches zero, so an alert is never silenced by it",
+   unlit >= D.CONFIG.CONFIDENCE_FLOOR);
+
+ok("a weak phone box is worth less than a strong one",
+   D.confidence("phone", { phone: { phones: [{ confidence: 0.4 }] } }) <
+   D.confidence("phone", { phone: { phones: [{ confidence: 0.9 }] } }));
+
 // ---- scoring ----
+group("the safety index");
+
 const index = new D.DriverSafetyIndex();
 const quiet = index.update({ face_detected: true, blink: { microsleep: false, confidence: 1 },
   drowsiness: { level: "AWAKE" }, distraction: { distracted: false }, yawn: { recent_yawns: 0 } }, 0, 12);
@@ -157,9 +506,9 @@ ok("a clean frame scores 100 and reads SAFE",
    Math.round(quiet.score) === 100 && quiet.level === "SAFE");
 
 /** Hold one frame until the smoothing has settled. */
-function settle(index, frame, hour) {
+function settle(index, frame, context) {
   let st = 0, risk = null;
-  for (let i = 0; i < 90; i++) { risk = index.update(frame, st, hour); st += STEP; }
+  for (let i = 0; i < 90; i++) { risk = index.update(frame, st, context); st += STEP; }
   return risk;
 }
 
@@ -191,14 +540,79 @@ const longer = settle(new D.DriverSafetyIndex(),
 ok("a 4 s microsleep costs the full 60 points",
    Math.abs(longer.score - 40) < 1.0, `score ${longer.score.toFixed(1)}`);
 
-const noon = new D.DriverSafetyIndex(), night = new D.DriverSafetyIndex();
-const frame = { face_detected: true, blink: { microsleep: false, confidence: 1 },
+const noonIndex = new D.DriverSafetyIndex(), nightIndex = new D.DriverSafetyIndex();
+const drowsyFrame = { face_detected: true, blink: { microsleep: false, confidence: 1 },
   drowsiness: { level: "DROWSY", perclos: 0.3 }, distraction: { distracted: false },
   yawn: { recent_yawns: 0 }, head_pose: { yaw: 0 } };
-const atNoon = noon.update(frame, 0, 12).contributions[0].penalty;
-const atThree = night.update(frame, 0, 3).contributions[0].penalty;
+const atNoon = noonIndex.update(drowsyFrame, 0, 12).contributions[0].penalty;
+const atThree = nightIndex.update(drowsyFrame, 0, 3).contributions[0].penalty;
 ok("the same drowsiness costs more at 3 am than at noon", atThree > atNoon,
    `${atNoon.toFixed(1)} -> ${atThree.toFixed(1)}`);
+
+// The three layers have to be visible in the contribution, or the
+// panel cannot print the arithmetic.
+const layered = noonIndex.contributions[0];
+ok("each contribution carries its own severity, confidence and context",
+   typeof layered.sev === "number" && typeof layered.conf === "number" &&
+   typeof layered.ctx === "number",
+   `${D.RISK_PENALTIES.drowsy} ×${layered.sev.toFixed(2)} ×${layered.conf.toFixed(2)}`);
+
+// A blinded camera and an absent driver are the same missing face.
+// Charging both would bill one fault twice.
+const covered = { face_detected: false, camera: { blocked: true, duration: 5 } };
+const blocked = settle(new D.DriverSafetyIndex(), covered, 12);
+ok("a blocked camera is not also charged as an absent driver",
+   blocked.active.has("camera_blocked") && !blocked.active.has("driver_absent"));
+
+// And an absent driver still is, when the camera can see fine.
+const empty = settle(new D.DriverSafetyIndex(),
+  { face_detected: false, camera: { blocked: false } }, 12);
+ok("an empty seat in front of a working camera is", empty.active.has("driver_absent"));
+
+// Attention conditions take the attention multiplier, not the
+// circadian one.
+const glancing = {
+  face_detected: true, blink: { microsleep: false, confidence: 1 },
+  drowsiness: { level: "AWAKE" }, yawn: { recent_yawns: 0 },
+  distraction: { distracted: true, off_road_duration: 6 }, head_pose: { yaw: 40 }
+};
+const dry = settle(new D.DriverSafetyIndex(), glancing,
+  new D.DrivingContext({ hour: 12, weather: "clear" }));
+const icy = settle(new D.DriverSafetyIndex(), glancing,
+  new D.DrivingContext({ hour: 12, weather: "ice" }));
+ok("the same glance away costs more on ice", icy.score < dry.score,
+   `${dry.score.toFixed(1)} -> ${icy.score.toFixed(1)}`);
+
+const nightGlance = settle(new D.DriverSafetyIndex(), glancing,
+  new D.DrivingContext({ hour: 3, weather: "clear" }));
+ok("but no more at 3 am than at noon",
+   Math.abs(nightGlance.score - dry.score) < 0.01,
+   `${dry.score.toFixed(1)} vs ${nightGlance.score.toFixed(1)}`);
+
+// Every condition in the table has to be reachable, or a penalty is
+// documented and never charged.
+const everyCondition = new Set(D.CONDITIONS.map(([name]) => name));
+ok("every condition in the table has a penalty",
+   [...everyCondition].every(name => D.RISK_PENALTIES[name] > 0),
+   `${everyCondition.size} conditions`);
+
+const loud = settle(new D.DriverSafetyIndex(), {
+  face_detected: true,
+  blink: { microsleep: true, closed_duration: 4, confidence: 1 },
+  drowsiness: { level: "DROWSY", perclos: 0.4 },
+  distraction: { distracted: true, off_road_duration: 6 },
+  yawn: { recent_yawns: 5 },
+  head_pose: { yaw: 0 },
+  camera: { blocked: false },
+  phone: { phone_in_use: true, usage_duration: 3, phones: [{ confidence: 0.9 }] },
+  wheel: { hands_off: true, missing_for: 10 },
+  seatbelt: { status: "OFF", ratio: 0 },
+  emotion: { negative: true, confidence: 0.9 }
+}, new D.DrivingContext({ hour: 3, elapsed: 3 * 3600, weather: "ice" }));
+ok("everything at once floors the score rather than going below zero",
+   loud.score === 0 && loud.level === "DANGER");
+ok("and the banner shows the most urgent of them",
+   loud.alert.name === "microsleep", `"${loud.alert.message}"`);
 
 document.getElementById("out").innerHTML = out.join("\n");
 const tally = document.getElementById("tally");
