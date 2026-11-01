@@ -614,6 +614,45 @@ ok("everything at once floors the score rather than going below zero",
 ok("and the banner shows the most urgent of them",
    loud.alert.name === "microsleep", `"${loud.alert.message}"`);
 
+// ---- what it says out loud ----
+group("spoken alerts");
+
+// Handing the banner text to a speech engine made it spell
+// "MICROSLEEP" and "UP" out letter by letter: all caps is how an
+// acronym is written, so that is how it was read.
+ok("every condition has a spoken line",
+   [...everyCondition].every(name => typeof D.SPOKEN[name] === "string" &&
+                                     D.SPOKEN[name].length > 0));
+
+const shouted = Object.entries(D.SPOKEN)
+  .filter(([, line]) => line === line.toUpperCase());
+ok("and none of them is shouted at the speech engine", shouted.length === 0,
+   shouted.map(([name]) => name).join(", "));
+
+// A dash is read as the word "dash" by some engines and as nothing at
+// all by others, and neither is what the banner's hyphen meant.
+ok("and none of them contains a dash",
+   Object.values(D.SPOKEN).every(line => !line.includes("-")));
+
+// The tone runs about 2 s for the rousing pattern, and a line still
+// being read out after the moment it was about is worse than silence.
+const longest = Object.entries(D.SPOKEN)
+  .sort((a, b) => b[1].length - a[1].length)[0];
+ok("and the longest is short enough to finish in time",
+   longest[1].length <= 46, `"${longest[1]}" (${longest[1].length} chars)`);
+
+// The one alert that has to reach someone whose eyes are already shut
+// gets the shortest line of the lot.
+ok("the microsleep line is the shortest of them all",
+   D.SPOKEN.microsleep.length ===
+   Math.min(...Object.values(D.SPOKEN).map(line => line.length)),
+   `"${D.SPOKEN.microsleep}"`);
+
+ok("and the alert carries it alongside the banner text",
+   loud.alert.spoken === D.SPOKEN.microsleep &&
+   loud.alert.spoken !== loud.alert.message,
+   `says "${loud.alert.spoken}", shows "${loud.alert.message}"`);
+
 document.getElementById("out").innerHTML = out.join("\n");
 const tally = document.getElementById("tally");
 tally.textContent = `${passed} passed, ${failed} failed`;

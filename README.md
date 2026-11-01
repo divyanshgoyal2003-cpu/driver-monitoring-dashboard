@@ -296,11 +296,44 @@ them. Leave both off and the app needs one model and runs at full speed.
 
 ### Checking it
 
-`docs/test.html` runs 83 checks in the browser, over synthetic landmarks,
+`docs/test.html` runs 89 checks in the browser, over synthetic landmarks,
 synthetic frames and a strap painted onto a canvas — the same properties the
 `unittest` suite asserts on the desktop, so the two implementations can be
 compared rather than merely trusted. Open it at
 [`/test.html`](https://divyanshgoyal2003-cpu.github.io/driver-monitoring-dashboard/test.html).
+
+### What it says out loud
+
+The phone build speaks its alerts as well as sounding them, because a
+phone in a windscreen mount is often the only thing in the car that can
+talk, and a tone tells a drowsy driver that *something* is wrong without
+telling them what.
+
+The first version simply spoke the banner text, and the banner is upper
+case so it can be read at a glance. All caps is how an acronym is
+written, so that is how the speech engine read it — **MICROSLEEP** and
+**UP** came out spelled letter by letter. The spoken line is now a
+separate string per condition, in natural case.
+
+Separating them turned out to be worth more than the pronunciation fix.
+A banner and a voice are not doing the same job: the banner names the
+condition, and the condition's name is not useful to someone who is in
+it. The spoken line is an instruction instead — "Eyes on the road",
+"Hands on the wheel", "Put the phone down" — and the shortest one of
+the eleven belongs to the microsleep, which is the one alert that has
+to land on someone whose eyes are already shut:
+
+| Shown | Said |
+|---|---|
+| `MICROSLEEP - WAKE UP` | "Wake up" |
+| `EYES OFF ROAD` | "Eyes on the road" |
+| `PHONE IN USE` | "Put the phone down" |
+| `DROWSINESS DETECTED` | "You are getting drowsy. Take a break" |
+
+The checks assert that every condition has a line, that none is all
+caps, that none contains a hyphen (read as "dash" by some engines and
+skipped by others), and that the longest still finishes inside the
+rousing tone's two seconds.
 
 It has already earned its keep twice. The painted-strap check failed on the
 first run, and the cause was a genuine bug: in the non-maximum suppression the

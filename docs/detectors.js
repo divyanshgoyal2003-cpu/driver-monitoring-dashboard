@@ -146,6 +146,8 @@ export const RISK_PENALTIES = {
 
 // (condition, message, severity) most urgent first. The first active
 // condition is the one shown in the banner.
+export { SPOKEN };
+
 export const CONDITIONS = [
   ["microsleep",       "MICROSLEEP - WAKE UP",   "critical"],
   ["phone",            "PHONE IN USE",           "high"],
@@ -159,6 +161,34 @@ export const CONDITIONS = [
   ["frequent_yawning", "FREQUENT YAWNING",       "medium"],
   ["negative_emotion", "NEGATIVE EXPRESSION",    "low"]
 ];
+
+// What each condition SAYS, as opposed to what it shows.
+//
+// The banner is upper case because it has to be read at a glance from
+// a mount, and handing that same string to a speech engine is how this
+// ended up spelling "MICROSLEEP" and "UP" out letter by letter -- all
+// caps is how you write an acronym, so that is what it was heard as.
+//
+// Natural case fixes the pronunciation, and once these are separate
+// strings they can also stop being labels and start being
+// instructions. A driver does not need to be told the name of the
+// condition they are in; they need to be told the one thing that ends
+// it. So the spoken line is an imperative wherever there is an action
+// to name, and the shortest one that carries -- there is no point in a
+// sentence still being read out after the moment it was about.
+const SPOKEN = {
+  microsleep:       "Wake up",
+  phone:            "Put the phone down",
+  distracted:       "Eyes on the road",
+  hands_off:        "Hands on the wheel",
+  camera_blocked:   "The camera is covered",
+  driver_absent:    "Driver not visible",
+  drowsy:           "You are getting drowsy. Take a break",
+  tired:            "You are showing signs of fatigue",
+  no_seatbelt:      "Check your seatbelt",
+  frequent_yawning: "You have been yawning. Think about a break",
+  negative_emotion: "You seem tense"
+};
 
 // (value at which the condition starts, value at which it reaches full
 // weight). Below the first the penalty is scaled by SEVERITY_FLOOR.
@@ -1457,7 +1487,10 @@ export class DriverSafetyIndex {
 
     let alert = null;
     for (const [name, message, sev] of CONDITIONS) {
-      if (active.has(name)) { alert = { name, message, severity: sev }; break; }
+      if (active.has(name)) {
+        alert = { name, message, spoken: SPOKEN[name], severity: sev };
+        break;
+      }
     }
 
     return {

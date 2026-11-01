@@ -189,9 +189,11 @@ function alertFor(alert, t) {
 
   pattern(FATIGUE_ALERTS.has(alert.name) ? ROUSE : NOTIFY);
 
-  if (fresh && "speechSynthesis" in window) {
-    const say = new SpeechSynthesisUtterance(alert.message.replace(/-/g, ","));
-    say.rate = 1.1;
+  // The spoken line, not the banner text: see SPOKEN in detectors.js
+  // for why those are two different strings.
+  if (fresh && alert.spoken && "speechSynthesis" in window) {
+    const say = new SpeechSynthesisUtterance(alert.spoken);
+    say.rate = 1.05;
     speechSynthesis.cancel();
     speechSynthesis.speak(say);
   }
