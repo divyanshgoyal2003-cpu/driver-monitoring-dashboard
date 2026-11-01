@@ -219,7 +219,7 @@ def _percent(value):
     return "    --" if value is None else f"{value * 100:5.1f}%"
 
 
-def format_accuracy(results, recording=None, covers=None):
+def format_accuracy(results, recording=None, covers=None, truth=None):
 
     lines = [
         "Detection accuracy",
@@ -238,7 +238,7 @@ def format_accuracy(results, recording=None, covers=None):
     if not results:
         lines.append("  (nothing labelled and nothing detected)")
 
-    skipped = _unmeasured(recording, covers)
+    skipped = _unmeasured(recording, covers, truth)
 
     if skipped:
         # Naming these matters. A reader who does not find blink in the
@@ -253,25 +253,46 @@ def format_accuracy(results, recording=None, covers=None):
     return "\n".join(lines)
 
 
-def _unmeasured(recording, covers):
+def _unmeasured(recording, covers, truth=None):
     """
-    Labels left out of the scoring that the monitor detected anyway. A
-    label nobody looked for and nothing found is not worth a line.
+    Labels left out of the scoring, named so the gap cannot pass for a
+    clean sheet. A label nobody looked for and nothing found is not
+    worth a line -- but one the file *writes down* and then excludes
+    is, however little was detected, because a cue missing from both
+    the table and this list reads as a cue that never happened.
+
+    That case is not hypothetical. take2.csv records an eleven second
+    hands_off episode and leaves the label out of its cover line,
+    because the clip was filmed at a desk and there is no wheel in it
+    to have hands off; the monitor correctly reported nothing, and
+    without this the whole cue vanished from the report.
     """
 
     if recording is None or covers is None:
         return []
 
+    performed = {
+        label.label for label in (truth or [])
+    }
+
     names = []
 
     for name in labels_module.POINT_LABELS:
-        if name not in covers and recording.points[name]:
-            found = len(recording.points[name])
+        if name in covers:
+            continue
+
+        found = len(recording.points[name])
+
+        if found or name in performed:
             names.append(f"{name} ({found} detected)")
 
     for name in labels_module.INTERVAL_LABELS:
-        if name not in covers and any(recording.flags[name]):
-            episodes = len(recording.spans(name))
+        if name in covers:
+            continue
+
+        episodes = len(recording.spans(name))
+
+        if episodes or name in performed:
             names.append(f"{name} ({episodes} detected)")
 
     return names
@@ -417,7 +438,8 @@ def main(argv=None):
         print(format_accuracy(
             score_against(recording, truth),
             recording,
-            getattr(truth, "covers", None)
+            getattr(truth, "covers", None),
+            truth
         ))
 
     print()

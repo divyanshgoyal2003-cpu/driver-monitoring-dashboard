@@ -239,6 +239,99 @@ class CoveredScoringTest(unittest.TestCase):
         self.assertNotIn("Not measured", report)
 
 
+class PerformedButUncoveredTest(unittest.TestCase):
+    """
+    A cue the file writes down and then excludes from scoring.
+
+    take2.csv does exactly this with hands_off: it records the eleven
+    second episode that was performed, and leaves the label out of the
+    cover line because the clip was filmed at a desk and there is no
+    wheel in it to have hands off. The monitor correctly reported
+    nothing -- and a cue absent from the accuracy table *and* from the
+    unmeasured list reads as a cue that never happened.
+    """
+
+    def quiet(self):
+        """A recording in which the monitor reported nothing at all."""
+
+        recording = Recording()
+
+        for i in range(10):
+            state = {
+                "blink": {"blink_count": 0},
+                "yawn": {"yawn_count": 0},
+                "drowsiness": {"microsleep": False},
+                "distraction": {"distracted": False},
+                "phone": {"in_use": False},
+                "wheel": {"hands_off": False},
+                "seatbelt": {"status": "ON"},
+            }
+            risk = {"score": 100.0}
+            recording.add(state, float(i), risk, risk)
+
+        return recording
+
+    def report(self, recording, truth):
+        return format_accuracy(
+            score_against(recording, truth), recording, truth.covers,
+            truth
+        )
+
+    def test_an_excluded_episode_is_still_named(self):
+        recording = self.quiet()
+        truth = parse([
+            "#cover: blink",
+            "2.0,,blink",
+            "3.0,6.0,hands_off",
+        ])
+
+        report = self.report(recording, truth)
+
+        self.assertIn("Not measured", report)
+        self.assertIn("hands_off (0 detected)", report)
+
+    def test_an_excluded_point_event_is_too(self):
+        recording = self.quiet()
+        truth = parse([
+            "#cover: blink",
+            "2.0,,blink",
+            "3.0,,yawn",
+        ])
+
+        report = self.report(recording, truth)
+
+        self.assertIn("yawn (0 detected)", report)
+
+    def test_a_label_nobody_wrote_down_is_not_named(self):
+        """
+        The rule this does not undo: silence about a cue that is in
+        neither the file nor the detections is the right amount to say.
+        """
+
+        recording = self.quiet()
+        truth = parse(["#cover: blink", "2.0,,blink"])
+
+        report = self.report(recording, truth)
+
+        self.assertNotIn("Not measured", report)
+
+    def test_the_old_behaviour_survives_without_the_truth(self):
+        """
+        format_accuracy is called with the labels now, but callers that
+        do not pass them still get everything that was detected.
+        """
+
+        recording = self.quiet()
+        recording.flags["distracted"][0] = True
+        truth = parse(["#cover: blink", "2.0,,blink"])
+
+        report = format_accuracy(
+            score_against(recording, truth), recording, truth.covers
+        )
+
+        self.assertIn("distracted", report)
+
+
 class PointMatchingTest(unittest.TestCase):
 
     def labels(self, *times):
