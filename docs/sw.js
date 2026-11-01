@@ -10,7 +10,7 @@
  * the old one.
  */
 
-const CACHE = "driver-monitor-v8";
+const CACHE = "driver-monitor-v9";
 
 // The two optional models are NOT in here. They are opt-in, they are
 // 15 MB between them, and pre-caching them would hand that bill to

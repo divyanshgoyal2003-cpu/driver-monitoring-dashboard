@@ -117,6 +117,20 @@ let updateWaiting = false;
 let lastVideoTime = -1;
 let frameIndex = 0;
 let frames = 0, fpsLast = 0, fps = 0;
+
+/*
+ * Frame rate alone cannot say whether this is fast enough, because the
+ * loop only runs on a NEW camera frame -- the counter can never read
+ * higher than the camera is delivering. A webcam in a dim room
+ * lengthens its exposure and quietly drops to 20 or 15 fps, and the
+ * reading looks identical to a pipeline that cannot keep up.
+ *
+ * So the work is timed separately. If the milliseconds per frame sit
+ * well under the gap between frames, the camera is the limit and no
+ * amount of optimising here will move the number.
+ */
+let workMs = 0;
+let cameraFps = null;
 let sessionStart = null, lastTick = null;
 let wakeLock = null;
 let hourOverride = null;
@@ -530,9 +544,14 @@ function render(state, risk, t) {
   }
 
   const elapsed = sessionStart === null ? 0 : t - sessionStart;
-  setCell("session", clock(elapsed), `${fps.toFixed(0)} fps`, "");
+  // Both numbers, because one of them without the other cannot tell a
+  // slow camera from slow code.
+  setCell("session", clock(elapsed),
+          `${fps.toFixed(0)} fps \u00b7 ${workMs.toFixed(0)} ms`, "");
 
-  el.fps.textContent = `${fps.toFixed(0)} fps`;
+  el.fps.textContent = cameraFps
+    ? `${fps.toFixed(0)}/${Math.round(cameraFps)} fps \u00b7 ${workMs.toFixed(0)} ms`
+    : `${fps.toFixed(0)} fps \u00b7 ${workMs.toFixed(0)} ms`;
 }
 
 // ----------------------------------------------------------------------
@@ -649,6 +668,12 @@ function tick() {
     // Rate limited inside the service, so calling it every frame only
     // actually fetches every fifteen minutes.
     weather.refresh(t).then(tried => { if (tried) showWeather(); });
+
+    // Everything above, from grabbing the frame to painting the
+    // panel. Smoothed, because a single frame that collided with a
+    // garbage collection says nothing.
+    const spent = performance.now() - now;
+    workMs = workMs ? workMs * 0.9 + spent * 0.1 : spent;
 
     frameIndex += 1;
     frames += 1;
@@ -957,6 +982,14 @@ async function start() {
   el.video.srcObject = stream;
   await el.video.play();
 
+  // What the camera agreed to, which is the ceiling on everything
+  // below. Browsers differ on whether they report it at all.
+  try {
+    cameraFps = stream.getVideoTracks()[0]?.getSettings?.().frameRate ?? null;
+  } catch (e) {
+    cameraFps = null;
+  }
+
   el.start.textContent = "Loading the face model…";
 
   let fileset;
@@ -1024,6 +1057,7 @@ async function start() {
   lowest = 100;
   lastTick = null;
   frameIndex = 0;
+  workMs = 0;
   handPoints = null;
   phoneBoxes = null;
   lastStrap = null;
