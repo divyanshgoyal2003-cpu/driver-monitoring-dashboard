@@ -207,12 +207,27 @@ const SEVERITY_SPANS = {
 // Hours when fatigue lapses are most likely to be real, applied to the
 // fatigue conditions only. Follows published work on when fatigue
 // crashes happen; see the README.
+// Each band carries a name as well as a number, because a panel that
+// shows only "x1.40" is asking the driver to take the clock on faith.
+// The hour comes off their own device; saying which band it landed in
+// is how that becomes visible rather than merely true.
 const CIRCADIAN = [
-  [2, 6, 1.40],
-  [0, 2, 1.20],
-  [6, 7, 1.20],
-  [14, 16, 1.15]
+  [2, 6, 1.40, "small hours"],
+  [0, 2, 1.20, "after midnight"],
+  [6, 7, 1.20, "dawn"],
+  [14, 16, 1.15, "after lunch"]
 ];
+
+/** The band an hour falls in, named. Always returns something, so the
+ *  panel has a row to draw even when nothing is amplifying. */
+export function circadianBand(hour) {
+  for (const [start, end, multiplier, label] of CIRCADIAN) {
+    if (hour >= start && hour < end) {
+      return { multiplier, label, start, end };
+    }
+  }
+  return { multiplier: 1.0, label: "ordinary hours", start: null, end: null };
+}
 
 // Which conditions each context multiplier applies to.
 const FATIGUE = new Set(["microsleep", "drowsy", "tired", "frequent_yawning"]);
@@ -1213,10 +1228,7 @@ export class DrivingContext {
   }
 
   circadianMultiplier() {
-    for (const [start, end, multiplier] of CIRCADIAN) {
-      if (this.hour >= start && this.hour < end) return multiplier;
-    }
-    return 1.0;
+    return circadianBand(this.hour).multiplier;
   }
 
   timeOnTaskMultiplier() {
@@ -1257,7 +1269,7 @@ export class DrivingContext {
   summary() {
     const parts = [];
     if (this.circadianMultiplier() > 1.0) {
-      parts.push(this.hour < 7 ? "night" : "afternoon");
+      parts.push(circadianBand(this.hour).label);
     }
     if (this.timeOnTaskMultiplier() > 1.01) {
       parts.push(`${(this.elapsed / 3600).toFixed(1)}h`);

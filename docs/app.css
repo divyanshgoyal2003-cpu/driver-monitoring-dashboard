@@ -539,3 +539,78 @@ select {
 .drive [data-band="ok"]   { color: var(--ok); }
 .drive [data-band="warn"] { color: var(--warn); }
 .drive [data-band="bad"]  { color: var(--bad); }
+
+/* ---------- context ---------- */
+
+.ctx {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.ctx h2 {
+  font-size: 11px;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--dim);
+  font-weight: 600;
+  margin: 0 0 6px;
+}
+
+.ctx h2 span { color: var(--line); letter-spacing: .04em; }
+
+.ctx-row {
+  display: grid;
+  grid-template-columns: 92px 1fr auto;
+  gap: 10px;
+  align-items: baseline;
+  padding: 5px 0;
+  border-top: 1px solid var(--panel-2);
+  font-size: 13px;
+}
+
+.ctx-row .k {
+  font-size: 10.5px;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.ctx-row .v { color: var(--fg); }
+
+.ctx-row .m {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;
+  color: var(--dim);
+}
+
+/* A multiplier that is actually doing something should not look like
+   one that is not. */
+.ctx-row[data-live="on"] .m { color: var(--warn); font-weight: 600; }
+.ctx-row[data-live="stale"] .v { color: var(--muted); }
+.ctx-row[data-live="bad"] .v { color: var(--bad); }
+
+.ctx-total {
+  display: flex;
+  gap: 16px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  font-size: 11px;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+
+.ctx-total strong {
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0;
+  color: var(--fg);
+}
+
+.ctx-total strong[data-live="on"] { color: var(--warn); }

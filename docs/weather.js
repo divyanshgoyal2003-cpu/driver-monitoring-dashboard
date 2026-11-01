@@ -11,12 +11,19 @@
  *
  * Where the location comes from is the one thing this does differently
  * from the desktop. There, coordinates are typed into a config file and
- * nothing happens until they are. Here the browser asks permission and
- * the driver answers it, which is the same consent made explicit --
+ * nothing happens until they are. Here the browser asks permission once
+ * and the driver answers it, which is the same consent made explicit --
  * and, unlike an IP lookup, no third party is told anything in order to
  * guess where the phone is. Coordinates are rounded before they are
  * sent, because a forecast is a city-scale thing and the extra decimals
  * would only be precision given away for nothing.
+ *
+ * `status` exists because this used to be silent about its own state.
+ * It worked -- it fetched, it interpreted, it returned "clear" -- and
+ * "clear x1.00" read exactly like a forecast that had never arrived.
+ * A reading of 1.00 from a clear sky and a 1.00 from ignorance weigh
+ * the same and mean completely different things, so the panel has to
+ * be able to tell them apart.
  */
 
 export const WEATHER_MULTIPLIERS = {
@@ -48,14 +55,19 @@ const WMO = {
 
 const URL = "https://api.open-meteo.com/v1/forecast";
 const REFRESH = 900.0;    // the API's `current` block updates this often
-const TIMEOUT = 6000;
+const TIMEOUT = 8000;
 
 const ICE_TEMPERATURE = 0.5;
 const FOG_VISIBILITY = 1000.0;
 
+// Where the last known coordinates are kept, so the second drive needs
+// no prompt and no input at all.
+const STORED = "driver-monitor-location";
+
 // Ordered worst-last, so "pick the worse of two readings" is a
 // comparison of positions in this list.
-const SEVERITY_ORDER = ["clear", "cloudy", "rain", "heavy_rain", "fog", "snow", "ice"];
+const SEVERITY_ORDER =
+  ["clear", "cloudy", "rain", "heavy_rain", "fog", "snow", "ice"];
 
 function worse(a, b) {
   if (a === null) return b;
@@ -95,27 +107,44 @@ export function interpret(code, temperature, visibility) {
 export class WeatherService {
   constructor() {
     this.condition = null;
+    this.temperature = null;
+    this.visibility = null;
     this.fetchedAt = null;
-    this.coordinates = null;
+    this.coordinates = recall();
     this.error = null;
     this.pending = false;
+
+    // idle | locating | fetching | ready | failed
+    this.status = this.coordinates ? "idle" : "idle";
   }
 
-  /** (condition, source). Source travels with the reading because a
-   *  1.0 from a clear sky and a 1.0 from ignorance are not the same
-   *  evidence, and the panel says which it is. */
+  /** (condition, source). The source travels with the reading because
+   *  a 1.00 from a clear sky and a 1.00 from ignorance are not the
+   *  same evidence, and the panel says which it is. */
   provenance() {
     if (this.condition === null) return [null, "default"];
     return [this.condition, "forecast"];
   }
 
-  /** Asks the browser for a location. The prompt is the driver's
-   *  consent; nothing is sent anywhere until they give it. */
+  get located() {
+    return this.coordinates !== null;
+  }
+
+  /**
+   * Asks the browser for a location. The prompt is the driver's
+   * consent; nothing is sent anywhere until they give it, and once
+   * they have, the coordinates are remembered so no later drive asks
+   * again.
+   */
   async locate() {
     if (!navigator.geolocation) {
+      this.status = "failed";
       this.error = "This browser has no location service.";
       return false;
     }
+
+    this.status = "locating";
+    this.error = null;
 
     try {
       const position = await new Promise((resolve, reject) =>
@@ -130,10 +159,13 @@ export class WeatherService {
         latitude: Math.round(position.coords.latitude * 100) / 100,
         longitude: Math.round(position.coords.longitude * 100) / 100
       };
-      this.error = null;
+
+      remember(this.coordinates);
+      this.status = "idle";
       return true;
     } catch (e) {
-      this.error = e.code === 1
+      this.status = "failed";
+      this.error = e && e.code === 1
         ? "Location permission was declined."
         : "Could not get a location.";
       return false;
@@ -146,6 +178,8 @@ export class WeatherService {
     if (this.fetchedAt !== null && t - this.fetchedAt < REFRESH) return false;
 
     this.pending = true;
+    this.status = "fetching";
+
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), TIMEOUT);
 
@@ -169,15 +203,22 @@ export class WeatherService {
       );
 
       this.temperature = current.temperature_2m ?? null;
+      this.visibility = current.visibility ?? null;
       this.fetchedAt = t;
-      this.error = this.condition === null
-        ? `Unrecognised forecast code ${current.weather_code}.`
-        : null;
+
+      if (this.condition === null) {
+        this.status = "failed";
+        this.error = `Forecast code ${current.weather_code} means nothing here.`;
+      } else {
+        this.status = "ready";
+        this.error = null;
+      }
     } catch (e) {
       // A forecast that did not arrive falls back to no reading, which
       // weighs 1.0. A system that cannot see the weather must not
       // invent an amplification.
       this.condition = null;
+      this.status = "failed";
       this.error = e.name === "AbortError"
         ? "The forecast timed out."
         : "The forecast could not be fetched.";
@@ -188,5 +229,49 @@ export class WeatherService {
     }
 
     return true;
+  }
+
+  /**
+   * Everything needed for one drive, asked for once and without the
+   * driver having to press anything. Returns true if there is a
+   * reading at the end of it.
+   */
+  async begin(t) {
+    if (!this.coordinates && !(await this.locate())) return false;
+    await this.refresh(t);
+    return this.condition !== null;
+  }
+
+  forget() {
+    this.coordinates = null;
+    this.condition = null;
+    this.fetchedAt = null;
+    this.status = "idle";
+    this.error = null;
+    try { localStorage.removeItem(STORED); } catch (e) { /* no storage */ }
+  }
+}
+
+// Storage can be unavailable, full, or holding something another
+// version of this page wrote, and a forecast is not worth throwing on.
+function remember(coordinates) {
+  try {
+    localStorage.setItem(STORED, JSON.stringify(coordinates));
+  } catch (e) { /* the prompt will simply come again next time */ }
+}
+
+function recall() {
+  try {
+    const raw = localStorage.getItem(STORED);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw);
+    const ok = parsed &&
+      Number.isFinite(parsed.latitude) && Number.isFinite(parsed.longitude) &&
+      Math.abs(parsed.latitude) <= 90 && Math.abs(parsed.longitude) <= 180;
+
+    return ok ? { latitude: parsed.latitude, longitude: parsed.longitude } : null;
+  } catch (e) {
+    return null;
   }
 }

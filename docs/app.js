@@ -27,7 +27,7 @@ import {
   BlinkDetector, DrowsinessDetector, YawnDetector, HeadPoseEstimator,
   DistractionDetector, CameraMonitor, WheelMonitor, PhoneMonitor,
   SeatbeltMonitor, ExpressionAnalyzer, DriverSafetyIndex, DrivingContext,
-  detectSeatbelt, faceBox
+  detectSeatbelt, faceBox, circadianBand
 } from "./detectors.js";
 
 import { WeatherService, WEATHER_MULTIPLIERS } from "./weather.js";
@@ -51,7 +51,12 @@ const el = {
   banner: $("banner"), bannerText: $("banner-text"), bannerDur: $("banner-dur"),
   calib: $("calib"),
   score: $("score"), ring: $("ring-value"), level: $("level"),
-  contrib: $("contrib"), fps: $("fps"), contextLabel: $("context-label"),
+  contrib: $("contrib"), fps: $("fps"),
+  ctxClock: $("ctx-clock"), ctxClockM: $("ctx-clock-m"),
+  ctxTask: $("ctx-task"), ctxTaskM: $("ctx-task-m"),
+  ctxWeather: $("ctx-weather"), ctxWeatherM: $("ctx-weather-m"),
+  ctxLight: $("ctx-light"), ctxLightM: $("ctx-light-m"),
+  ctxFatigue: $("ctx-fatigue"), ctxAttention: $("ctx-attention"),
   controls: $("controls"), hour: $("hour"), weather: $("weather"),
   locate: $("locate"), weatherNote: $("weather-note"),
   landmarks: $("landmarks"), recal: $("recal"), stop: $("stop"),
@@ -371,6 +376,95 @@ function setCell(key, value, sub, state) {
   cell.node.dataset.state = state || "";
 }
 
+const ctxRow = key => document.querySelector(`.ctx-row[data-ctx="${key}"]`);
+
+/**
+ * The context layer, with its inputs on screen rather than only its
+ * output.
+ *
+ * This panel exists because the previous version printed one line, and
+ * only when something was amplifying. The hour was read from the
+ * device every frame and the forecast was fetched and interpreted
+ * correctly -- and a working forecast reporting a clear sky looked
+ * exactly like a forecast that had never arrived, because both come
+ * out as x1.00 against the words "nothing amplifying". Every row here
+ * draws whether or not it is doing anything, and says where its number
+ * came from.
+ */
+function renderContext(ctx) {
+  const show = (row, value, multiplier, state) => {
+    row.v.textContent = value;
+    row.m.textContent = `×${multiplier.toFixed(2)}`;
+    row.node.dataset.live = state ?? (multiplier > 1.001 ? "on" : "");
+  };
+
+  const rows = {
+    clock: { node: ctxRow("clock"), v: el.ctxClock, m: el.ctxClockM },
+    task: { node: ctxRow("task"), v: el.ctxTask, m: el.ctxTaskM },
+    weather: { node: ctxRow("weather"), v: el.ctxWeather, m: el.ctxWeatherM },
+    light: { node: ctxRow("light"), v: el.ctxLight, m: el.ctxLightM }
+  };
+
+  // The clock. `hourOverride` is the demo switch; when it is off, this
+  // is simply what the device says the time is.
+  const band = circadianBand(ctx.hour);
+  const now = new Date();
+  const real = `${String(now.getHours()).padStart(2, "0")}:` +
+               `${String(now.getMinutes()).padStart(2, "0")}`;
+
+  show(rows.clock,
+    hourOverride === null
+      ? `${real} · ${band.label}`
+      : `${String(ctx.hour).padStart(2, "0")}:00 · ${band.label} (set by hand)`,
+    band.multiplier);
+
+  show(rows.task, clock(ctx.elapsed), ctx.timeOnTaskMultiplier());
+
+  // The weather, and -- the part that was missing -- where it came
+  // from and whether it actually arrived.
+  const [condition, source] = currentWeather();
+  const multiplier = ctx.weatherMultiplier();
+  const reading = condition.replace(/_/g, " ");
+
+  let text, state = null;
+
+  if (source === "driver") {
+    text = `${reading} · you said`;
+  } else if (weather.status === "ready") {
+    text = `${reading} · forecast` +
+      (weather.temperature !== null ? ` · ${Math.round(weather.temperature)}°C` : "");
+  } else if (weather.status === "locating") {
+    text = "asking for your location…";
+    state = "stale";
+  } else if (weather.status === "fetching") {
+    text = "fetching the forecast…";
+    state = "stale";
+  } else if (weather.status === "failed") {
+    text = weather.error || "no reading";
+    state = "bad";
+  } else {
+    text = "no reading — weighing nothing";
+    state = "stale";
+  }
+
+  show(rows.weather, text, multiplier, state);
+
+  show(rows.light,
+    ctx.brightness === null
+      ? "not measured"
+      : `${ctx.brightness.toFixed(0)} of 255 · ` +
+        (ctx.darkness > 0.66 ? "dark" : ctx.darkness > 0.2 ? "dim" : "well lit"),
+    ctx.attentionMultiplier() / ctx.weatherMultiplier());
+
+  const fatigue = ctx.fatigueMultiplier();
+  const attention = ctx.attentionMultiplier();
+
+  el.ctxFatigue.textContent = `×${fatigue.toFixed(2)}`;
+  el.ctxAttention.textContent = `×${attention.toFixed(2)}`;
+  el.ctxFatigue.dataset.live = fatigue > 1.001 ? "on" : "";
+  el.ctxAttention.dataset.live = attention > 1.001 ? "on" : "";
+}
+
 function clock(seconds) {
   const mm = String(Math.floor(seconds / 60)).padStart(2, "0");
   const ss = String(Math.floor(seconds % 60)).padStart(2, "0");
@@ -406,11 +500,7 @@ function render(state, risk, t) {
     ).join("");
   }
 
-  const summary = risk.context.summary();
-  el.contextLabel.textContent = summary
-    ? `context: ${summary} — fatigue ×${risk.context.fatigueMultiplier().toFixed(2)},` +
-      ` attention ×${risk.context.attentionMultiplier().toFixed(2)}`
-    : "context: nothing amplifying";
+  renderContext(risk.context);
 
   if (risk.alert) {
     el.banner.hidden = false;
@@ -723,12 +813,41 @@ function showWeather() {
   const multiplier = WEATHER_MULTIPLIERS[condition] ?? 1.0;
 
   const where = source === "driver" ? "you said"
-              : source === "forecast" ? "forecast"
+              : weather.status === "ready" ? "forecast"
+              : weather.status === "locating" ? "asking for your location"
+              : weather.status === "fetching" ? "fetching"
+              : weather.status === "failed" ? (weather.error || "no reading")
               : "no reading";
 
   el.weatherNote.textContent =
-    `${condition.replace(/_/g, " ")} ×${multiplier.toFixed(2)} · ${where}` +
-    (weather.error ? ` · ${weather.error}` : "");
+    `${condition.replace(/_/g, " ")} ×${multiplier.toFixed(2)} · ${where}`;
+
+  // The panel is the real display; keep it in step whenever this
+  // changes, including while nothing is running.
+  if (!running) {
+    renderContext(new DrivingContext({
+      hour: hourOverride === null ? new Date().getHours() : hourOverride,
+      weather: condition,
+      weatherSource: source
+    }));
+  }
+}
+
+/**
+ * Ask for a location and a forecast without the driver pressing
+ * anything.
+ *
+ * Deliberately not awaited by start(): a forecast is worth having and
+ * is worth nothing at all compared to the camera already running, so
+ * it must never be able to delay or fail the drive. If the browser
+ * prompts, it prompts over a monitor that is already working.
+ */
+function fetchWeather() {
+  weather.begin(performance.now() / 1000)
+    .then(showWeather)
+    .catch(() => showWeather());
+
+  showWeather();
 }
 
 // ----------------------------------------------------------------------
@@ -961,7 +1080,9 @@ async function start() {
   el.live.hidden = false;
   el.controls.hidden = false;
 
-  showWeather();
+  // Coordinates are remembered after the first time, so on every drive
+  // but the first this is silent and the forecast is simply there.
+  fetchWeather();
   requestAnimationFrame(tick);
 }
 
@@ -1018,6 +1139,10 @@ el.landmarks.addEventListener("click", () => {
 
 el.hour.addEventListener("change", () => {
   hourOverride = el.hour.value === "" ? null : Number(el.hour.value);
+  // The running loop redraws the panel every frame, but a demo is
+  // usually set up before pressing start, and until this the panel
+  // simply ignored the selector while idle.
+  showWeather();
 });
 
 el.weather.addEventListener("change", () => {
@@ -1025,15 +1150,19 @@ el.weather.addEventListener("change", () => {
   showWeather();
 });
 
+// Only a retry now, for a declined prompt or a forecast that did not
+// arrive. The normal path asks for nothing.
 el.locate.addEventListener("click", async () => {
   el.locate.disabled = true;
   el.locate.textContent = "Asking…";
 
-  const located = await weather.locate();
-  if (located) await weather.refresh(performance.now() / 1000);
+  // A fresh attempt, so a driver who declined and changed their mind
+  // is not held to the stored refusal.
+  weather.fetchedAt = null;
+  const ok = await weather.begin(performance.now() / 1000);
 
   el.locate.disabled = false;
-  el.locate.textContent = located ? "Refresh forecast" : "Use my location";
+  el.locate.textContent = ok ? "Refresh forecast" : "Retry forecast";
   showWeather();
 });
 
@@ -1057,6 +1186,14 @@ document.addEventListener("visibilitychange", async () => {
 
 renderHistory();
 showWeather();
+
+// If this device has been located before, the coordinates are already
+// in hand and the forecast can be on screen before the driver has
+// pressed anything at all. No prompt is possible on this path, because
+// nothing is being asked for.
+if (weather.located) {
+  weather.refresh(performance.now() / 1000).then(showWeather).catch(() => {});
+}
 
 if ("serviceWorker" in navigator && location.protocol === "https:") {
   navigator.serviceWorker.register("./sw.js").catch(() => {});

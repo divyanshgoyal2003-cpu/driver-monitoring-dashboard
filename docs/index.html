@@ -135,7 +135,37 @@
     <div>
       <div class="level" id="level" data-level="SAFE">SAFE</div>
       <div class="contrib" id="contrib"><div class="none">not started</div></div>
-      <div class="context" id="context-label"></div>
+    </div>
+  </section>
+
+  <!-- ---------- what the situation is doing to the cost ---------- -->
+  <section class="ctx" id="context">
+    <h2>Context <span>&middot; read from this device</span></h2>
+
+    <div class="ctx-row" data-ctx="clock">
+      <span class="k">Time of day</span>
+      <span class="v" id="ctx-clock">--</span>
+      <span class="m" id="ctx-clock-m">&times;1.00</span>
+    </div>
+    <div class="ctx-row" data-ctx="task">
+      <span class="k">At the wheel</span>
+      <span class="v" id="ctx-task">00:00</span>
+      <span class="m" id="ctx-task-m">&times;1.00</span>
+    </div>
+    <div class="ctx-row" data-ctx="weather">
+      <span class="k">Weather</span>
+      <span class="v" id="ctx-weather">no reading</span>
+      <span class="m" id="ctx-weather-m">&times;1.00</span>
+    </div>
+    <div class="ctx-row" data-ctx="light">
+      <span class="k">Cabin light</span>
+      <span class="v" id="ctx-light">--</span>
+      <span class="m" id="ctx-light-m">&times;1.00</span>
+    </div>
+
+    <div class="ctx-total">
+      <span>fatigue <strong id="ctx-fatigue">&times;1.00</strong></span>
+      <span>attention <strong id="ctx-attention">&times;1.00</strong></span>
     </div>
   </section>
 
@@ -212,16 +242,22 @@
       </select>
     </label>
 
-    <button class="ghost" id="locate">Use my location</button>
+    <button class="ghost" id="locate">Retry forecast</button>
     <span class="weather-note" id="weather-note"></span>
   </div>
 
   <p class="note">
-    The hour selector overrides the clock so the circadian weighting can be
-    shown without waiting for 3&nbsp;am. The weather selector does the same for
-    the forecast, which is what the <code>W</code> key does on the desktop:
-    you can always overrule a forecast, and the panel says whether a reading
-    came from you, from the forecast, or from nowhere at all.
+    <strong>Nothing above needs setting.</strong> The hour comes from this
+    device&rsquo;s own clock, the cabin light off the camera, and the forecast
+    from your location the first time you allow it &mdash; after that the
+    coordinates are remembered and no drive asks again. The two selectors
+    below only exist to <em>override</em> that, so the weighting can be
+    demonstrated without waiting for 3&nbsp;am or for rain. The weather
+    override is what the <code>W</code> key does on the desktop, and the
+    panel always says whether a reading came from you, from the forecast, or
+    from nowhere at all &mdash; because a &times;1.00 from a clear sky and a
+    &times;1.00 from ignorance weigh the same and mean nothing like the same
+    thing.
   </p>
 
   <p class="note">

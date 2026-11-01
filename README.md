@@ -296,11 +296,44 @@ them. Leave both off and the app needs one model and runs at full speed.
 
 ### Checking it
 
-`docs/test.html` runs 89 checks in the browser, over synthetic landmarks,
+`docs/test.html` runs 99 checks in the browser, over synthetic landmarks,
 synthetic frames and a strap painted onto a canvas — the same properties the
 `unittest` suite asserts on the desktop, so the two implementations can be
 compared rather than merely trusted. Open it at
 [`/test.html`](https://divyanshgoyal2003-cpu.github.io/driver-monitoring-dashboard/test.html).
+
+### Nothing to configure
+
+Every input the context layer uses is read from the device it is running
+on, and the panel shows each one whether or not it is doing anything:
+
+```
+CONTEXT · READ FROM THIS DEVICE
+  TIME OF DAY    02:21 · small hours              ×1.40
+  AT THE WHEEL   00:00                           ×1.00
+  WEATHER        clear · forecast · 21°C          ×1.00
+  CABIN LIGHT    88 of 255 · well lit            ×1.00
+  FATIGUE ×1.40   ATTENTION ×1.00
+```
+
+The hour comes from the browser's own clock, the cabin light off the
+camera, and the forecast from the device's location the first time it is
+allowed — after which the coordinates are remembered and no later drive
+asks for anything. The two selectors exist only to *override* this, so
+the weighting can be demonstrated without waiting for 3 am or for rain,
+and an overridden hour is labelled `(set by hand)` so a demo is never
+mistaken for a measurement.
+
+Drawing every row, always, is the point. The first version printed one
+line and only when something was amplifying, which hid a genuine
+problem: the forecast was working perfectly — fetching, interpreting a
+WMO code, returning `clear` — and a clear sky weighs ×1.00, which on
+screen was indistinguishable from a forecast that had never arrived.
+Both are ×1.00 and they are not remotely the same evidence, which is
+exactly why `weather_source` exists in the Python. The row now says
+which it is, and the service carries a status (`locating`, `fetching`,
+`ready`, `failed`) so a declined permission or a timed-out request says
+so in words instead of silently weighing nothing.
 
 ### What it says out loud
 

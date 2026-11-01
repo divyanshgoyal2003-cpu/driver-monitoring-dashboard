@@ -36,7 +36,7 @@
 <script type="module">
 import * as D from "./detectors.js";
 import * as V from "./vision.js";
-import { interpret, WEATHER_MULTIPLIERS } from "./weather.js";
+import { interpret, WEATHER_MULTIPLIERS, WeatherService } from "./weather.js";
 
 const out = [];
 let passed = 0, failed = 0;
@@ -432,6 +432,75 @@ ok("and they never make the road sound better",
 // A forecast the system cannot interpret must not silently remove the
 // amplification by reading as "clear".
 ok("an unrecognised code is no reading at all", interpret(4242, 10, 20000) === null);
+
+// Every hour of the day has to land in a named band, or the panel has
+// a row it cannot draw.
+group("the clock");
+
+const bands = Array.from({ length: 24 }, (_, h) => D.circadianBand(h));
+ok("every hour of the day falls in a named band",
+   bands.every(b => typeof b.label === "string" && b.label.length > 0));
+ok("and carries the multiplier that hour is worth",
+   D.circadianBand(3).multiplier === 1.40 &&
+   D.circadianBand(1).multiplier === 1.20 &&
+   D.circadianBand(15).multiplier === 1.15 &&
+   D.circadianBand(11).multiplier === 1.00,
+   `03:00 is "${D.circadianBand(3).label}", 11:00 is "${D.circadianBand(11).label}"`);
+
+// The panel draws this row whether or not anything is amplifying, so
+// an ordinary hour needs a name too -- it is the row that shows the
+// clock is being read at all.
+ok("an hour that amplifies nothing is still named",
+   D.circadianBand(11).label.length > 0 && D.circadianBand(11).multiplier === 1.0,
+   `"${D.circadianBand(11).label}"`);
+
+ok("the bands agree with the context the score uses",
+   Array.from({ length: 24 }, (_, h) =>
+     D.circadianBand(h).multiplier ===
+     new D.DrivingContext({ hour: h }).circadianMultiplier()).every(Boolean));
+
+// ---- the forecast's own state ----
+group("forecast provenance");
+
+// This is the bug this group exists for: the forecast worked, reported
+// a clear sky, and was indistinguishable on screen from a forecast
+// that never arrived. Both weigh 1.00; they are not the same evidence.
+const quietSky = new WeatherService();
+quietSky.condition = "clear";
+quietSky.status = "ready";
+ok("a clear sky is a reading, and says so",
+   quietSky.provenance()[1] === "forecast" &&
+   WEATHER_MULTIPLIERS[quietSky.provenance()[0]] === 1.0);
+
+const nothing = new WeatherService();
+nothing.forget();
+ok("and no reading at all is not",
+   nothing.provenance()[0] === null && nothing.provenance()[1] === "default");
+
+ok("a service with no coordinates reports it is not located",
+   !nothing.located);
+
+// Coordinates are rounded before they are sent: a forecast resolves to
+// a city, so the rest is precision given away for nothing.
+const rounded = new WeatherService();
+rounded.coordinates = { latitude: 28.6139391, longitude: 77.2090212 };
+ok("coordinates would be sent at two decimals",
+   Math.round(rounded.coordinates.latitude * 100) / 100 === 28.61);
+
+// Remembered, so the second drive asks for nothing.
+const remembering = new WeatherService();
+remembering.coordinates = { latitude: 12.34, longitude: 56.78 };
+try { localStorage.setItem("driver-monitor-location",
+  JSON.stringify(remembering.coordinates)); } catch (e) {}
+const recalled = new WeatherService();
+ok("a located device does not have to be asked twice",
+   recalled.located && recalled.coordinates.latitude === 12.34);
+
+// Storage can hold anything, including what an older version wrote.
+try { localStorage.setItem("driver-monitor-location", '{"latitude":"north"}'); } catch (e) {}
+ok("and nonsense in storage is ignored rather than sent",
+   !new WeatherService().located);
+new WeatherService().forget();
 
 // ---- context ----
 group("driving context");
