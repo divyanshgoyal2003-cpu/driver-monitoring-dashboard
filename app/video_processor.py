@@ -85,6 +85,9 @@ class VideoProcessor:
         self.frame_index = 0
         self.phones = []
 
+        # Set once a driver has been located; see where it is used.
+        self.wheel_line = None
+
         # Everything measured on the latest frame, for rendering and
         # logging.
         self.state = {}
@@ -228,8 +231,17 @@ class VideoProcessor:
                 and not camera_data["blocked"]):
             hand_observation = self.hand_landmarker.detect(frame, timestamp)
 
+        # Where the wheel would be, if it is in shot at all: below the
+        # driver's chin. Held across frames that lose the face, since
+        # the camera has not moved just because a head turned away.
+        if driver_box is not None:
+            self.wheel_line = driver_box[3] / h
+
         wheel_data = self.wheel_monitor.update(
-            hand_observation, timestamp, blocked=camera_data["blocked"]
+            hand_observation,
+            timestamp,
+            blocked=camera_data["blocked"],
+            wheel_line=self.wheel_line
         )
 
         self.frame_index += 1

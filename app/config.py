@@ -287,14 +287,33 @@ HANDS_OFF_TIME = 3.0
 #
 # This camera is aimed at a face, and on most setups the wheel is below
 # the bottom edge - so "no hands found" is the normal state, not a
-# warning. The monitor therefore has to earn the right to complain: it
-# only judges once it has found hands HANDS_SEEN_SAMPLES times within
-# the last HANDS_SEEN_WINDOW seconds, which is evidence the wheel is in
-# shot. Until then the status is UNKNOWN. The window, rather than a
-# running total, means a camera knocked out of position stops claiming
-# it can see.
+# warning. The monitor therefore has to earn the right to complain,
+# and what earns it is hands being found in a decent SHARE of the
+# recent past rather than a number of times.
+#
+# The count was the first attempt and it was far too cheap. Hands are
+# looked for on one frame in six, so ten sightings is two seconds of
+# one continuous sighting, and two seconds bought sixty seconds of
+# judgement. Measured on a recording: the driver held a phone up
+# beside their face, the monitor decided after 1.7s of that it could
+# see the wheel, and it then called the next thirty seconds -- hands
+# resting in a lap, below the frame -- hands off the wheel. 1520
+# frames reported against 349 performed, 22.9% precision.
+#
+# A share is the right shape for the question. A wheel that is in shot
+# has hands on it nearly all the time, so the real figure is close to
+# 100% and even a long legitimate spell off the wheel leaves it high.
+# A wheel that is out of shot produces hands only in passing -- a
+# gesture, a scratch, a phone -- which is a small fraction of a minute
+# however vividly it happens.
 HANDS_SEEN_WINDOW = 60.0
-HANDS_SEEN_SAMPLES = 10
+HANDS_SEEN_SHARE = 0.3
+
+# And the window has to have had this long to fill before the share
+# means anything, or the first hand of the drive is 100% of the
+# evidence. It costs the first half-minute of every session, which is
+# the cheapest thing here to give up.
+HANDS_SEEN_WARMUP = 30.0
 
 # The strap's edges must lean between these angles from horizontal. A
 # shoulder-to-hip strap seen from the front sits at about 55-65 degrees;
