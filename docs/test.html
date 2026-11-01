@@ -1,0 +1,209 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Detector Checks</title>
+<link rel="stylesheet" href="./app.css">
+<style>
+  pre { font-family: var(--mono); font-size: 12.5px; line-height: 1.7; margin: 0;
+        white-space: pre-wrap; }
+  .pass { color: var(--ok); }
+  .fail { color: var(--bad); }
+  .tally { font-size: 17px; font-weight: 600; margin: 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Detector Checks <span>&middot; ported maths</span></h1>
+  </header>
+
+  <p class="note" style="border:0;padding:0">
+    The browser port has to agree with the Python it came from, so the same
+    properties the <code>unittest</code> suite checks on the desktop are
+    checked here on synthetic landmarks with known geometry. Two of them are
+    bugs the desktop evaluation harness found and that this port inherits the
+    fixes for.
+  </p>
+
+  <p class="tally" id="tally">running&hellip;</p>
+  <pre id="out"></pre>
+</div>
+
+<script type="module">
+import * as D from "./detectors.js";
+
+const out = [];
+let passed = 0, failed = 0;
+
+function ok(name, cond, extra = "") {
+  cond ? passed++ : failed++;
+  out.push(`<span class="${cond ? "pass" : "fail"}">${cond ? "PASS" : "FAIL"}</span>  ` +
+           `${name}${extra ? `  <span style="color:var(--dim)">${extra}</span>` : ""}`);
+}
+
+const STEP = 1 / 30;
+
+/** A face with a known eye opening, in pixels. */
+function face(open) {
+  const p = Array.from({ length: 400 }, () => ({ x: 0, y: 0 }));
+  p[33] = { x: 0, y: 0 };   p[133] = { x: 30, y: 0 };
+  p[160] = { x: 10, y: -open }; p[158] = { x: 20, y: -open };
+  p[144] = { x: 10, y: open };  p[153] = { x: 20, y: open };
+  p[362] = { x: 0, y: 0 };  p[263] = { x: 30, y: 0 };
+  p[385] = { x: 10, y: -open }; p[387] = { x: 20, y: -open };
+  p[380] = { x: 10, y: open };  p[373] = { x: 20, y: open };
+  p[61] = { x: 0, y: 50 };  p[291] = { x: 30, y: 50 };
+  p[13] = { x: 15, y: 48 }; p[14] = { x: 15, y: 52 };
+  return p;
+}
+
+const IDENTITY = [1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1];
+
+// ---- head pose ----
+const straight = D.headPose(IDENTITY);
+ok("an identity matrix is dead ahead",
+   Math.abs(straight.yaw) < 0.01 && Math.abs(straight.pitch) < 0.01,
+   `yaw ${straight.yaw.toFixed(2)} pitch ${straight.pitch.toFixed(2)}`);
+
+const a = 30 * Math.PI / 180, c = Math.cos(a), s = Math.sin(a);
+const turned = D.headPose([c,0,-s,0, 0,1,0,0, s,0,c,0, 0,0,0,1]);
+ok("a 30 degree turn reads as 30 degrees",
+   Math.abs(Math.abs(turned.yaw) - 30) < 0.01, `yaw ${turned.yaw.toFixed(2)}`);
+
+// The desktop solver had a mirror twin: +30 and -30 projected to nearly
+// the same picture and it walked between them, 31 sign crossings in 206
+// frames. A matrix carries the sign, so the twin cannot arise.
+ok("the sign is stable across repeated reads",
+   new Set(Array.from({ length: 50 }, () =>
+     Math.sign(D.headPose([c,0,-s,0, 0,1,0,0, s,0,c,0, 0,0,0,1]).yaw))).size === 1);
+
+// ---- eyes and mouth ----
+const earOpen = D.eyeAspectRatio(face(5), [33,160,158,133,153,144]);
+const earShut = D.eyeAspectRatio(face(0.2), [33,160,158,133,153,144]);
+ok("an open eye is above the default threshold", earOpen > 0.23, `EAR ${earOpen.toFixed(3)}`);
+ok("a shut eye is below it", earShut < 0.23, `EAR ${earShut.toFixed(3)}`);
+ok("a resting mouth is below MAR_THRESHOLD",
+   D.mouthAspectRatio(face(5)) < 0.34, `MAR ${D.mouthAspectRatio(face(5)).toFixed(3)}`);
+
+// ---- blinks and microsleep ----
+const blink = new D.BlinkDetector();
+let t = 0;
+const feed = (open, secs) => {
+  for (let i = 0; i < secs * 30; i++) { blink.update(face(open), t); t += STEP; }
+};
+
+feed(5, 12);
+ok("calibration settles on a threshold inside its bounds",
+   blink.threshold >= D.CONFIG.EAR_THRESHOLD_MIN &&
+   blink.threshold <= D.CONFIG.EAR_THRESHOLD_MAX,
+   `threshold ${blink.threshold.toFixed(3)}`);
+
+const before = blink.blinkCount;
+feed(0.2, 0.2); feed(5, 0.5);
+ok("a 0.2 s closure is one blink", blink.blinkCount === before + 1);
+
+const micro = blink.microsleepCount;
+feed(0.2, 2.0); feed(5, 0.5);
+ok("a 2 s closure is a microsleep, and not also a blink",
+   blink.microsleepCount === micro + 1 && blink.blinkCount === before + 1);
+
+ok("no face returns null rather than a stale reading",
+   blink.update(null, t) === null);
+
+// ---- distraction ----
+const distraction = new D.DistractionDetector();
+const pose = yaw => ({ yaw, pitch: 0, roll: 0, calibrated: true, reliable: true });
+let dt = 0;
+const hold = (yaw, secs) => {
+  let r = null;
+  for (let i = 0; i < secs * 30; i++) { r = distraction.update(pose(yaw), dt); dt += STEP; }
+  return r;
+};
+
+ok("a one second glance is not a distraction", !hold(40, 1.0).distracted);
+
+const sustained = hold(40, 1.5);
+ok("two seconds off the road is", sustained.distracted &&
+   sustained.distraction_count === 1);
+
+// One reading of 9 degrees once sat between two of 54 on a recorded
+// nine second turn, and everything after it was thrown away.
+const stray = distraction.update(pose(5), dt); dt += STEP;
+ok("one stray frame does not end an episode", stray.distracted);
+ok("and it is not recounted as a second one", stray.distraction_count === 1);
+ok("sustained looking back does end it", !hold(0, 1.0).distracted);
+
+// ---- the mouth gate ----
+// A yawn with the driver facing straight ahead produced 28 degrees of
+// reported yaw on the desktop, and a logged distraction.
+const head = new D.HeadPoseEstimator();
+let ht = 0;
+for (let i = 0; i < 4 * 30; i++) { head.update(IDENTITY, 0.02, ht); ht += STEP; }
+
+ok("the head pose calibrates", head.update(IDENTITY, 0.02, ht).calibrated);
+
+const yawning = head.update(IDENTITY, 0.80, ht);
+ok("a pose is not vouched for while the mouth is wide open", yawning.reliable === false);
+ok("and the distraction detector then claims nothing",
+   distraction.update(yawning, ht) === null);
+
+// ---- scoring ----
+const index = new D.DriverSafetyIndex();
+const quiet = index.update({ face_detected: true, blink: { microsleep: false, confidence: 1 },
+  drowsiness: { level: "AWAKE" }, distraction: { distracted: false }, yawn: { recent_yawns: 0 } }, 0, 12);
+ok("a clean frame scores 100 and reads SAFE",
+   Math.round(quiet.score) === 100 && quiet.level === "SAFE");
+
+/** Hold one frame until the smoothing has settled. */
+function settle(index, frame, hour) {
+  let st = 0, risk = null;
+  for (let i = 0; i < 90; i++) { risk = index.update(frame, st, hour); st += STEP; }
+  return risk;
+}
+
+const sleeping = {
+  face_detected: true,
+  blink: { microsleep: true, closed_duration: 3.0, confidence: 1 },
+  drowsiness: { level: "AWAKE" }, distraction: { distracted: false },
+  yawn: { recent_yawns: 0 }, head_pose: { yaw: 0 }
+};
+
+// 60 base x 0.76 severity (3 s into a span that tops out at 4 s) = 45.6,
+// so three seconds is not yet the full penalty and the score lands in
+// CAUTION. Scaling by duration is the point: a 400 ms lapse and a four
+// second one are not the same event.
+const atMidday = settle(new D.DriverSafetyIndex(), sleeping, 12);
+ok("a 3 s microsleep at noon costs about 45 points",
+   atMidday.level === "CAUTION" && Math.abs(atMidday.score - 54.4) < 1.5,
+   `score ${atMidday.score.toFixed(1)}`);
+
+// The same lapse at 3 am is multiplied by 1.40 and crosses into DANGER.
+const atNight = settle(new D.DriverSafetyIndex(), sleeping, 3);
+ok("the same microsleep at 3 am crosses into DANGER",
+   atNight.level === "DANGER" && atNight.score < atMidday.score,
+   `score ${atNight.score.toFixed(1)}`);
+
+// Four seconds is the top of the span, so the penalty is the full 60.
+const longer = settle(new D.DriverSafetyIndex(),
+  { ...sleeping, blink: { microsleep: true, closed_duration: 4.0, confidence: 1 } }, 12);
+ok("a 4 s microsleep costs the full 60 points",
+   Math.abs(longer.score - 40) < 1.0, `score ${longer.score.toFixed(1)}`);
+
+const noon = new D.DriverSafetyIndex(), night = new D.DriverSafetyIndex();
+const frame = { face_detected: true, blink: { microsleep: false, confidence: 1 },
+  drowsiness: { level: "DROWSY", perclos: 0.3 }, distraction: { distracted: false },
+  yawn: { recent_yawns: 0 }, head_pose: { yaw: 0 } };
+const atNoon = noon.update(frame, 0, 12).contributions[0].penalty;
+const atThree = night.update(frame, 0, 3).contributions[0].penalty;
+ok("the same drowsiness costs more at 3 am than at noon", atThree > atNoon,
+   `${atNoon.toFixed(1)} -> ${atThree.toFixed(1)}`);
+
+document.getElementById("out").innerHTML = out.join("\n");
+const tally = document.getElementById("tally");
+tally.textContent = `${passed} passed, ${failed} failed`;
+tally.style.color = failed ? "var(--bad)" : "var(--ok)";
+</script>
+</body>
+</html>

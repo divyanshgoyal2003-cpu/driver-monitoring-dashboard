@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Driver Monitor</title>
+<meta name="description" content="On-device driver fatigue and distraction monitoring. Nothing leaves your phone.">
+<meta name="theme-color" content="#0a0e13">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="./manifest.webmanifest">
+<link rel="icon" href="./icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="./icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<link rel="stylesheet" href="./app.css">
+</head>
+<body>
+<div class="wrap">
+
+  <header>
+    <h1>Driver Monitor <span>&middot; on-device</span></h1>
+    <div class="fps" id="fps"></div>
+  </header>
+
+  <div class="err" id="error" hidden></div>
+
+  <!-- ---------- start screen ---------- -->
+  <section class="intro" id="intro">
+    <h2>Fatigue and distraction monitoring, running on your phone</h2>
+
+    <p>
+      Mount the phone so the front camera can see your face, then start.
+      The camera feed is processed on this device and never uploaded &mdash;
+      there is no server to send it to.
+    </p>
+
+    <ul>
+      <li><strong>Microsleep</strong> &mdash; eyes closed past 1.5&nbsp;s</li>
+      <li><strong>Drowsiness</strong> &mdash; PERCLOS over a rolling minute</li>
+      <li><strong>Yawning</strong> &mdash; counted when the mouth closes again</li>
+      <li><strong>Distraction</strong> &mdash; head off the road past 2&nbsp;s</li>
+      <li><strong>Safety index</strong> &mdash; each lapse weighed by how bad,
+          how trustworthy the measurement is, and the time of day</li>
+    </ul>
+
+    <p>
+      The first few seconds calibrate: look straight ahead while it learns
+      your neutral head position, and keep blinking normally while it learns
+      your eye shape. A fixed blink threshold misreads some people's eyes as
+      permanently shut.
+    </p>
+
+    <button id="start">Start monitoring</button>
+  </section>
+
+  <!-- ---------- live ---------- -->
+  <section id="live" hidden>
+    <div class="stage">
+      <video id="video" playsinline muted autoplay></video>
+      <canvas id="overlay"></canvas>
+      <div class="calibrating" id="calib" hidden></div>
+      <div class="banner" id="banner" hidden>
+        <span id="banner-text"></span>
+        <span class="dur" id="banner-dur"></span>
+      </div>
+    </div>
+  </section>
+
+  <section class="score" id="score-panel">
+    <div class="ring">
+      <svg viewBox="0 0 100 100" aria-hidden="true">
+        <circle class="track" cx="50" cy="50" r="45"></circle>
+        <circle class="value" id="ring-value" cx="50" cy="50" r="45"
+                stroke-dasharray="283" stroke-dashoffset="0"></circle>
+      </svg>
+      <div class="num" id="score">100</div>
+    </div>
+    <div>
+      <div class="level" id="level" data-level="SAFE">SAFE</div>
+      <div class="contrib" id="contrib"><div class="none">not started</div></div>
+    </div>
+  </section>
+
+  <div class="grid">
+    <div class="cell" data-cell="ear">
+      <div class="k">Eye opening</div><div class="v">--</div><div class="s">EAR</div>
+    </div>
+    <div class="cell" data-cell="perclos">
+      <div class="k">PERCLOS</div><div class="v">--</div><div class="s">60 s window</div>
+    </div>
+    <div class="cell" data-cell="blinks">
+      <div class="k">Blinks</div><div class="v">0</div><div class="s">0/min</div>
+    </div>
+    <div class="cell" data-cell="microsleep">
+      <div class="k">Microsleeps</div><div class="v">0</div><div class="s">episodes</div>
+    </div>
+    <div class="cell" data-cell="yawns">
+      <div class="k">Yawns</div><div class="v">0</div><div class="s">MAR --</div>
+    </div>
+    <div class="cell" data-cell="yaw">
+      <div class="k">Head</div><div class="v">--</div><div class="s">yaw / pitch</div>
+    </div>
+    <div class="cell" data-cell="distractions">
+      <div class="k">Distractions</div><div class="v">0</div><div class="s">episodes</div>
+    </div>
+    <div class="cell" data-cell="session">
+      <div class="k">Session</div><div class="v">00:00</div><div class="s">-- fps</div>
+    </div>
+  </div>
+
+  <div class="controls" id="controls" hidden>
+    <button class="ghost" id="recal">Recalibrate</button>
+    <button class="ghost" id="landmarks">Hide landmarks</button>
+    <button class="ghost" id="stop">Stop</button>
+    <label for="hour">
+      Hour
+      <select id="hour">
+        <option value="">now</option>
+        <option value="3">03:00 &mdash; &times;1.40</option>
+        <option value="1">01:00 &mdash; &times;1.20</option>
+        <option value="6">06:00 &mdash; &times;1.20</option>
+        <option value="15">15:00 &mdash; &times;1.15</option>
+        <option value="12">12:00 &mdash; &times;1.00</option>
+      </select>
+    </label>
+  </div>
+
+  <p class="note">
+    The hour selector overrides the clock so the circadian weighting can be
+    shown without waiting for 3&nbsp;am: the same lapse costs more at night,
+    when a fatigue detection is more likely to be real. Fatigue penalties are
+    multiplied; attention penalties are not.
+  </p>
+
+  <p class="note">
+    Ported from the desktop system in this repository. Head pose comes from
+    MediaPipe's own facial transformation matrix rather than
+    <code>solvePnP</code>, which avoids the mirror ambiguity that made a
+    turned head read as turned the other way. Hands on the wheel, seatbelt
+    and phone detection are not in this build.
+  </p>
+
+</div>
+
+<script type="module" src="./app.js"></script>
+</body>
+</html>
