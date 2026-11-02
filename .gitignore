@@ -13,3 +13,10 @@ data/*
 data/eval/*
 !data/eval/*.csv
 *.part
+
+# The desktop build. node_modules is a hundred megabytes of Electron,
+# and dist/ is the executable it produces -- both are regenerable from
+# desktop/package.json with two commands, and neither belongs in a
+# repository this one is cloned from.
+desktop/node_modules/
+desktop/dist/

@@ -25,6 +25,7 @@ A single camera feed is analysed by several models at once. Their outputs are co
 | Analytics Dashboard | Each session is saved to SQLite and explored in a Streamlit dashboard. |
 | Installable Web App | The whole system, ported to run on a phone with nothing to install and nothing uploaded — see [on a phone](#on-a-phone). |
 | Driver Profiles | Named drivers on the device, each keeping their own learned eye threshold and drive log — see [knowing who is driving](#knowing-who-is-driving). |
+| Downloadable App | The same web app as a single Windows executable: no install, no Python, no network, and the same 131 checks runnable from inside it — see [as a downloadable app](#as-a-downloadable-app). |
 
 ## How it fits together
 
@@ -488,6 +489,125 @@ a median near either end of the range leaves the high threshold clamped to 255
 and unreachable, so the median is now clamped to a band where the derived pair
 still means something.
 
+## As a downloadable app
+
+Some reviewers would rather double-click something than trust a URL, and a
+phone in a mount is not the only place this gets demonstrated. So
+[`desktop/`](desktop/) wraps the app as a Windows executable that needs no
+install, no Python and no network.
+
+```
+cd desktop
+npm install          # also downloads the MediaPipe runtime and the webfont
+npm run verify       # checks this machine's build and prints a verdict
+npm run build        # dist/DriverMonitor-1.0.0-portable.exe
+```
+
+The result is one file. Copy it anywhere and run it. There is nothing to
+install, and nothing it needs from the network.
+
+### It is the web app, not a port of it
+
+The window does not contain a rewrite. It contains [`docs/`](docs/) --
+the same `app.js`, the same detectors, the same scoring -- served to the
+window over loopback by a small static server inside the process. There
+is one copy of the system and no second version that can quietly drift
+from the one being reviewed. `desktop/` holds a server, a camera
+permission and a menu; that is all of it.
+
+Loopback rather than `file://`, because three separate things break
+there: the app is ES modules, and a module loaded from `file://` has a
+null origin, so every `import` fails the CORS check; `getUserMedia`
+needs a secure context, and `http://127.0.0.1` is one while `file://` is
+not; and `fetch()` refuses `file://` outright, which is how the models
+load. The server binds 127.0.0.1 only, takes whatever port the OS
+offers, and serves nothing outside `docs/`.
+
+### Nothing it needs from the network
+
+The models were already local. What was not is the MediaPipe runtime --
+the JS bundle and its WebAssembly -- and the webfont, which `docs/` asks
+a CDN for. On GitHub Pages that is the right answer, because the service
+worker caches them on the first run. This build has no service worker,
+and the room a demo happens in is exactly where the wifi is worst, so
+`npm install` downloads them into `desktop/vendor/` and the main process
+answers those requests from there.
+
+`docs/` is not edited to point at them. It still asks for the same CDN
+addresses it asks for on Pages, and the shell rewrites those requests
+on the way out -- so there is still one copy of the web app and no
+desktop fork of it to keep in step. If `vendor/` is missing the rewrite
+does not happen and the requests go to the CDN as they always did: a
+skipped download should cost the offline guarantee, not the
+application.
+
+### What else the desktop build gets
+
+No address bar and no tab to lose. No service worker -- the registration
+is guarded on `https:`, so on loopback it never runs, which means the
+files are read off the disk every launch and the cache that needed [two
+fixes](#taking-an-update) cannot go stale here at all.
+
+Everything else is identical, because it is the same code: per-driver
+profiles and stored EAR thresholds, drive history, the overlay modes,
+spoken alerts, the risk weighting and the manual weather override all
+behave exactly as they do in the browser. `localStorage` persists
+between launches, so drivers and drives survive a close.
+
+### Where the location comes from
+
+One browser API genuinely does not work in a packaged Electron app.
+Chromium resolves `navigator.geolocation` through a Google service that
+wants an API key; there is none, so `getCurrentPosition` fails with
+`POSITION_UNAVAILABLE` and the forecast -- one of the inputs the [risk
+weighting](#dynamic-risk-weighting) uses -- never arrives.
+
+Windows already knows where it is, and will say so through the location
+service the user controls in *Settings > Privacy*. That needs no key, no
+account and no third party, and nothing leaves the machine to answer it,
+so the shell asks Windows and hands the answer back through
+`getCurrentPosition`. Only that one method is replaced, and only on the
+instance; if Windows has no answer either -- the service is off, or
+location is denied to desktop apps -- the call falls through to the
+original, fails exactly as it would have, and the app says "Could not
+get a location" and carries on with the weather dropdown.
+
+Same bargain as the CDN rewrite: the shell supplies what the platform
+did not, and `docs/` is left alone. The coordinates are used for exactly
+what they are used for in the browser -- rounded to two decimals and
+sent to Open-Meteo, only after the driver has clicked *Locate*.
+
+### Checking the build itself
+
+A desktop build fails in ways a browser build cannot, and none of them
+show up in a screenshot: a module that will not import because the
+loopback server got a header wrong, a model left out of the package, a
+camera the permission handler quietly refused, a rewrite that did not
+fire and left the app needing the network it was built to do without.
+So `npm run verify` opens a hidden window, checks all of it, and exits
+with the verdict.
+
+```
+  ok    self-test suite        131 passed, 0 failed
+  ok    mediapipe + model      face_landmarker loaded
+  ok    camera                 640x480 @ 30 fps
+  ok    location (windows)     12.97, 79.16 (118 m)
+  ok    webfont                loaded
+  ok    cdn served locally     3 requests rewritten
+```
+
+It earned itself immediately. The `.wasm` files were being served as
+`application/octet-stream`, which `WebAssembly.compileStreaming` refuses
+outright, so every launch was quietly buffering the whole 9&nbsp;MB
+module before compiling it -- a warning in a console nobody was reading,
+and invisible in any screenshot. The font check caught that the
+stylesheet names its files by absolute URL, which had to be rewritten or
+the app would have reached `fonts.gstatic.com` on every start, offline
+claim and all.
+
+The shipped executable carries it too -- `DriverMonitor.exe --self-test`
+-- and so does the menu: press **Alt**, then *App > Self-test*.
+
 ## Setup
 
 Tested on Windows 11 with Python 3.12.
@@ -731,4 +851,8 @@ evaluation/     guided recording, and accuracy against hand-written
 utils/          alert sound, window sizing, low-light enhancement,
                 weather forecast client
 tests/          unit and end-to-end tests
+docs/           the progressive web app: the whole system in the browser
+desktop/        an Electron shell that serves docs/ as a Windows app:
+                a loopback static server, a camera permission, a menu,
+                and a self-test that checks the packaged build
 ```

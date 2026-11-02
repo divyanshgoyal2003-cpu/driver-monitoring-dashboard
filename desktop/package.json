@@ -1,0 +1,51 @@
+{
+  "name": "driver-monitor-desktop",
+  "productName": "Driver Monitor",
+  "version": "1.0.0",
+  "description": "Desktop build of the Driver Monitor web app",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-builder --win portable --publish never",
+    "build:installer": "electron-builder --win nsis --publish never",
+    "postinstall": "node fetch-vendor.js",
+    "vendor": "node fetch-vendor.js",
+    "verify": "electron . --self-test"
+  },
+  "devDependencies": {
+    "electron": "33.2.1",
+    "electron-builder": "25.1.8"
+  },
+  "build": {
+    "appId": "org.esa.drivermonitor",
+    "productName": "Driver Monitor",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "**/*",
+      "!dist/**",
+      "!**/*.md"
+    ],
+    "extraResources": [
+      {
+        "from": "../docs",
+        "to": "docs"
+      }
+    ],
+    "win": {
+      "icon": "build/icon.ico",
+      "artifactName": "DriverMonitor-${version}-portable.${ext}"
+    },
+    "portable": {
+      "artifactName": "DriverMonitor-${version}-portable.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "DriverMonitor-${version}-setup.${ext}"
+    },
+    "compression": "normal"
+  }
+}
