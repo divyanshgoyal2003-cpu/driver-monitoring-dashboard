@@ -11,7 +11,7 @@
  * So the window checks itself and the process exits with the verdict.
  */
 
-const { app, BrowserWindow } = require("electron");
+const { app, BrowserWindow, dialog } = require("electron");
 
 const CHECKS = `(async () => {
   const out = { };
@@ -120,6 +120,37 @@ async function run(serverUrl, prepare) {
 
   console.log("\n" + say.join("\n"));
   console.log(bad ? "\nSELF-TEST FAILED\n" : "\nSELF-TEST PASSED\n");
+
+  /*
+   * A packaged Electron app is a GUI binary: it attaches to no
+   * console, so everything printed above goes nowhere. Somebody who
+   * runs the shipped executable with --self-test would watch it start
+   * and exit in silence and learn nothing at all.
+   *
+   * So when there is no console to print to, the verdict is shown.
+   * Before the window is destroyed, not after: destroying the last
+   * window fires window-all-closed, and that handler quits the app.
+   *
+   * String.fromCharCode(10) rather than a newline escape, for the same
+   * reason as the console handler above.
+   */
+  if (app.isPackaged) {
+    await dialog.showMessageBox({
+      type: bad ? "error" : "info",
+      title: "Driver Monitor self-test",
+      message: bad ? "Self-test FAILED" : "Self-test passed",
+      // The page's own notes are diagnostics, and MediaPipe emits three
+      // of them on every healthy start. Leading a PASS with "OpenGL
+      // error checking is disabled" reads like a problem to somebody
+      // who has never seen it before, so they are kept for a failure,
+      // where they are the most useful lines in the box, and dropped
+      // from a pass, where they are only alarming.
+      detail: say.filter(line => bad || !line.startsWith("  note"))
+                 .join(String.fromCharCode(10)),
+      buttons: ["Close"],
+      noLink: true
+    });
+  }
 
   win.destroy();
   app.exit(bad ? 1 : 0);
