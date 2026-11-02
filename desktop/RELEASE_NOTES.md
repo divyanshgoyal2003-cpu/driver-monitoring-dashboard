@@ -75,7 +75,7 @@ app and pick *App > Self-test*.
 
 ### Verifying the download
 
-    SHA256: 73120b29df467044d5e5f5d8e7cbddc93f528d9b94376e86465b5dd92b06f0dd
+    SHA256: cf443aae472fcd7088f856894bf26f78587ce22324c63a73ba6c7830ad8dc7b0
 
 In PowerShell:
 
