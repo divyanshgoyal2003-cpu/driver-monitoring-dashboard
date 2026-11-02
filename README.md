@@ -515,6 +515,15 @@ is one copy of the system and no second version that can quietly drift
 from the one being reviewed. `desktop/` holds a server, a camera
 permission and a menu; that is all of it.
 
+Keeping one copy has a cost, and it is worth being honest about where
+it lands: the interface can no longer say "your phone". It used to --
+"running on your phone", "mount the phone so the front camera can see
+your face" -- which was true when a phone was the only place it ran, and
+wrong in a window on a laptop. The copy is device-neutral now rather
+than branched, so the same sentence is correct in all three places it
+appears. That is the trade this design makes: a shared file cannot be
+written for one of its readers.
+
 Loopback rather than `file://`, because three separate things break
 there: the app is ES modules, and a module loaded from `file://` has a
 null origin, so every `import` fails the CORS check; `getUserMedia`

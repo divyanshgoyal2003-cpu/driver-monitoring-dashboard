@@ -7,8 +7,10 @@
  * face landmarker is 3.6 MB and every detector that matters depends on
  * it; the hand landmarker (7.8 MB) and the object detector (7.3 MB) are
  * each worth a third of the download again, for one condition apiece,
- * and the driver is on a phone. So they are opt-in, and the intro says
- * what they cost.
+ * and the driver may well be on a phone on mobile data. So they are
+ * opt-in, and the intro says what they cost. (The downloadable build
+ * ships all three, but it runs this same file and the choice is still
+ * the driver's.)
  *
  * The heavy models are also staggered across frames, as they are on the
  * desktop: phone on frame 0 of each six, hands on frame 2, seatbelt on
