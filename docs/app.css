@@ -344,6 +344,20 @@ select {
   padding: 8px 10px;
 }
 
+/* The driver name field, which stands in for the modal the desktop
+   build cannot show. Shaped like the select beside it, so the row
+   does not change height when it appears. */
+.who-name {
+  font: inherit;
+  font-size: 13px;
+  background: var(--panel);
+  color: var(--fg);
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 8px 10px;
+  width: 150px;
+}
+
 .note {
   font-size: 12px;
   color: var(--dim);

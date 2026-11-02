@@ -12,6 +12,8 @@
  */
 
 const { app, BrowserWindow, dialog } = require("electron");
+const fs = require("node:fs");
+const path = require("node:path");
 
 const CHECKS = `(async () => {
   const out = { };
@@ -114,6 +116,20 @@ async function run(serverUrl, prepare) {
 
     const n = global.__rewrites || 0;
     note("cdn served locally", `${n} request${n === 1 ? "" : "s"} rewritten`, n > 0);
+
+    /*
+     * 6. Dialogs this window cannot show.
+     *
+     * window.prompt is not implemented in Electron: it throws. One
+     * call of it is a button that works in every browser, dies here
+     * on its first statement, and leaves nothing on screen to say
+     * why -- which is exactly how the Add-a-driver button shipped
+     * dead once. Nothing renders it visible, so it is read off the
+     * files rather than exercised.
+     */
+    const calls = asksForAModal();
+    note("no unsupported modal", calls.length ? calls.join(" ") : "none",
+         calls.length === 0);
   } catch (e) {
     note("ran at all", String(e), false);
   }
@@ -154,6 +170,35 @@ async function run(serverUrl, prepare) {
 
   win.destroy();
   app.exit(bad ? 1 : 0);
+}
+
+/*
+ * docs/ lands beside the executable's resources once packaged, and is
+ * the sibling folder when running from source -- the same two places
+ * main.js looks.
+ */
+function asksForAModal() {
+  const docs = app.isPackaged
+    ? path.join(process.resourcesPath, "docs")
+    : path.join(__dirname, "..", "docs");
+
+  // Spelt either way -- window.prompt throws exactly as the bare call
+  // does. Some other object's .prompt() does not, so a dot is only
+  // allowed after the global. Prose about permission prompts is all
+  // over these files and carries no bracket, so it never matches.
+  const call = /(^|[^.\w])(window\.|globalThis\.|self\.)?prompt\s*\(/;
+  const found = [];
+
+  for (const name of fs.readdirSync(docs)) {
+    if (!/\.(js|html)$/.test(name)) continue;
+    const lines = fs.readFileSync(path.join(docs, name), "utf8")
+                    .split(String.fromCharCode(10));
+    lines.forEach((line, i) => {
+      if (call.test(line)) found.push(`${name}:${i + 1}`);
+    });
+  }
+
+  return found;
 }
 
 module.exports = { run };

@@ -41,6 +41,15 @@
     </select>
 
     <button class="ghost" id="driver-add">Add</button>
+
+    <!-- The name is asked for here, in the page, rather than with
+         window.prompt, which Electron does not implement: the desktop
+         build's Add button threw on its first statement and looked
+         dead while the same line worked in every browser. Hidden
+         until Add is pressed, so the row stays as short as it was. -->
+    <input class="who-name" id="driver-new" type="text" maxlength="40"
+           placeholder="Name" autocomplete="off" hidden>
+
     <button class="ghost" id="driver-forget">Forget</button>
 
     <span class="weather-note" id="driver-note"></span>

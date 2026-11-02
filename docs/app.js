@@ -68,7 +68,7 @@ const el = {
   useHands: $("use-hands"), usePhone: $("use-phone"),
   report: $("report"), reportBody: $("report-body"), reportClose: $("report-close"),
   history: $("history"), historyClear: $("history-clear"),
-  driver: $("driver"), driverAdd: $("driver-add"),
+  driver: $("driver"), driverAdd: $("driver-add"), driverNew: $("driver-new"),
   driverForget: $("driver-forget"), driverNote: $("driver-note")
 };
 
@@ -1162,22 +1162,61 @@ el.driver.addEventListener("change", () => {
   renderHistory();
 });
 
-el.driverAdd.addEventListener("click", () => {
-  const name = prompt("Who is driving?");
-  if (name === null) return;
+/*
+ * Adding a driver, asked for in the page.
+ *
+ * This was one line of window.prompt, which worked in every browser
+ * and did nothing at all in the desktop build: Electron does not
+ * implement it -- the call throws -- so the click handler died on its
+ * first statement and the Add button looked dead, with no error
+ * anywhere a user could see. A field in the page works in all three
+ * builds, and it is the better interface anyway, because the reason a
+ * name was refused can sit next to the name instead of behind a
+ * modal that has already been dismissed.
+ */
+function askName() {
+  el.driverNew.hidden = false;
+  // Forget steps aside while a name is being typed. At phone width
+  // the row wraps and the field lands beside it, where "Forget" sits
+  // next to a half-typed name and reads like it is offering to throw
+  // it away. It has nothing to do while a new driver is being added.
+  el.driverForget.hidden = true;
+  el.driverNew.focus();
+}
 
-  const { state, driver, why } = profiles.addTo(drivers, name);
+function dropName() {
+  el.driverNew.hidden = true;
+  el.driverNew.value = "";
+  el.driverForget.hidden = false;
+}
+
+function takeName() {
+  const { state, driver, why } = profiles.addTo(drivers, el.driverNew.value);
   if (!driver) {
     el.notice.hidden = false;
     el.notice.textContent = why;
+    el.driverNew.focus();
     return;
   }
 
   drivers = state;
   profiles.save(drivers);
   el.notice.hidden = true;
+  dropName();
   renderDrivers();
   renderHistory();
+}
+
+// Add both opens the field and confirms it, so the mouse path is
+// Add, type, Add and the keyboard path is Add, type, Enter.
+el.driverAdd.addEventListener("click", () => {
+  if (el.driverNew.hidden) askName();
+  else takeName();
+});
+
+el.driverNew.addEventListener("keydown", e => {
+  if (e.key === "Enter") { e.preventDefault(); takeName(); }
+  if (e.key === "Escape") { dropName(); el.notice.hidden = true; }
 });
 
 // Deleting someone's data should be the one thing here that asks

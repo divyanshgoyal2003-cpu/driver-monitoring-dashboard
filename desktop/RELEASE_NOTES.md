@@ -64,9 +64,9 @@ only two things the shell supplies; everything else is the web app.
 
     DriverMonitor-1.0.0-portable.exe --self-test
 
-Runs the project's 131 checks plus the model, camera, location, font and
-offline checks inside the shipped executable, and shows the verdict in a
-dialog. Nothing is printed to a terminal: a packaged Electron app is a
+Runs the project's 131 checks plus the model, camera, location, font,
+offline and unsupported-dialog checks inside the shipped executable, and
+shows the verdict in a dialog. Nothing is printed to a terminal: a packaged Electron app is a
 GUI binary and attaches to no console, which is why the result is shown
 rather than written out.
 

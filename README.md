@@ -603,6 +603,7 @@ with the verdict.
   ok    location (windows)     12.97, 79.16 (118 m)
   ok    webfont                loaded
   ok    cdn served locally     3 requests rewritten
+  ok    no unsupported modal   none
 ```
 
 It earned itself immediately. The `.wasm` files were being served as
@@ -613,6 +614,16 @@ and invisible in any screenshot. The font check caught that the
 stylesheet names its files by absolute URL, which had to be rewritten or
 the app would have reached `fonts.gstatic.com` on every start, offline
 claim and all.
+
+The last line is the newest, and it is there because of a bug that got
+all the way to a reviewer's laptop. `window.prompt` is not implemented
+in Electron -- it throws -- and the Add-a-driver button was one call of
+it. The button worked in every browser and on the phone, and in the
+desktop window it died on its first statement and did nothing visible
+at all. Nothing renders a dialog that is never shown, so the check
+reads it off the files: any call of it in `docs/` fails the build, with
+the file and the line. The button now asks for the name in the page,
+which works in all three builds.
 
 The shipped executable carries it too -- `DriverMonitor.exe --self-test`
 -- and so does the menu: press **Alt**, then *App > Self-test*.
