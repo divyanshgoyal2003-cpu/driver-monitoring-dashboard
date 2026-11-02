@@ -10,7 +10,7 @@
  * the old one.
  */
 
-const CACHE = "driver-monitor-v10";
+const CACHE = "driver-monitor-v11";
 
 // The two optional models are NOT in here. They are opt-in, they are
 // 15 MB between them, and pre-caching them would hand that bill to
@@ -31,6 +31,7 @@ const SHELL = [
   "./manifest.webmanifest",
   "./icon.svg",
   "./icon-maskable.svg",
+  "./apple-touch-icon.png",
   "./face_landmarker.task"
 ];
 
